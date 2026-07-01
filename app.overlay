@@ -1,0 +1,75 @@
+#include <zephyr/dt-bindings/i2c/i2c.h>
+
+&pinctrl {
+	uart0_gp16_default: uart0_gp16_default {
+		group1 {
+			pinmux = <UART0_TX_P16>;
+		};
+
+		group2 {
+			pinmux = <UART0_RX_P17>;
+			input-enable;
+		};
+	};
+
+	i2c1_es8311_default: i2c1_es8311_default {
+		group1 {
+			pinmux = <I2C1_SDA_P6>, <I2C1_SCL_P7>;
+			input-enable;
+			input-schmitt-enable;
+		};
+	};
+
+	pio1_i2s_default: pio1_i2s_default {
+		bclk_pins {
+			pinmux = <PIO1_P4>;
+			input-enable;
+		};
+
+		lrclk_pins {
+			pinmux = <PIO1_P5>;
+			input-enable;
+		};
+
+		data_pins {
+			pinmux = <PIO1_P2>;
+			input-enable;
+		};
+
+		mclk_pins {
+			pinmux = <PIO1_P3>;
+		};
+
+		dout_pins {
+			pinmux = <PIO1_P1>;
+		};
+	};
+};
+
+&uart0 {
+	pinctrl-0 = <&uart0_gp16_default>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+&i2c1 {
+	clock-frequency = <I2C_BITRATE_FAST>;
+	pinctrl-0 = <&i2c1_es8311_default>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+&pio1 {
+	status = "okay";
+
+	pio1_i2s: pio1_i2s {
+		compatible = "raspberrypi,pico-pio-device";
+		pinctrl-0 = <&pio1_i2s_default>;
+		pinctrl-names = "default";
+		status = "okay";
+	};
+};
+
+&pio2 {
+	status = "okay";
+};
