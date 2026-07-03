@@ -48,7 +48,7 @@ zephyr_compile_definitions(
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 zephyr_include_directories(${ZEPHYR_HAL_RPI_PICO_MODULE_DIR}/src/rp2_common/hardware_dma/include)
-zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../RP2350-LCD-0.85/examples/C/02_ES8311/lib/audio_pio)
+zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/audio_pio)
 
 FILE(GLOB app_sources src/*.c)
 list(REMOVE_ITEM app_sources ${CMAKE_CURRENT_SOURCE_DIR}/src/pio_i2s.c)

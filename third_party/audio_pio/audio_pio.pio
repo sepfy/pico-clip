@@ -1,0 +1,107 @@
+.program mclk_pio;
+wrap_target:
+    set pins, 1
+    nop
+    set pins, 0
+    nop
+    jmp wrap_target
+
+.program audio_pio;
+    pull
+    wait 0 gpio 5
+start:
+    pull
+    wait 1 gpio 5   ; After being raised, it becomes the right channel.
+    wait 1 gpio 4   ; Skip the first clock.
+    set x, 15
+left_loop:
+    wait 0 gpio 4
+    out pins, 1
+    wait 1 gpio 4
+    jmp x-- left_loop
+    wait 0 gpio 5    ; Lowering the volume results in the left channel.
+    wait 1 gpio 4    ; Skip the first clock.
+    set x, 15
+right_loop:
+    wait 0 gpio 4
+    out pins, 1
+    wait 1 gpio 4
+    jmp x-- right_loop
+    jmp start
+.wrap
+
+.program read_pio;
+    wait 1 gpio 5
+start:
+    wait 0 gpio 5
+    wait 1 gpio 4
+    set x, 15
+left_loop:
+    wait 0 gpio 4
+    wait 1 gpio 4
+    in pins, 1
+    jmp x-- left_loop
+    wait 1 gpio 5
+    wait 1 gpio 4
+    set x, 15
+right_loop:
+    wait 0 gpio 4
+    wait 1 gpio 4
+    in pins, 1
+    jmp x-- right_loop
+    jmp start
+.wrap
+
+% c-sdk {
+static inline void mclk_pio_program_init(PIO pio, uint sm, uint offset, uint mclk_pin) {
+    pio_sm_config sm_config = mclk_pio_program_get_default_config(offset);
+
+    sm_config_set_out_pins(&sm_config, mclk_pin, 1);
+    sm_config_set_set_pins(&sm_config, mclk_pin, 1);
+
+    pio_sm_init(pio, sm, offset, &sm_config);
+
+    uint pin_mask = (1u << mclk_pin);
+    pio_sm_set_pindirs_with_mask(pio, sm, pin_mask, pin_mask);
+    pio_sm_set_pins(pio, sm, 0); // clear pins
+
+    pio_gpio_init(pio, mclk_pin);
+}
+
+static inline void audio_pio_program_init(PIO pio, uint sm, uint offset, uint data_pin, uint lrckl_pin) {
+    pio_sm_config sm_config = audio_pio_program_get_default_config(offset);
+
+    sm_config_set_out_pins(&sm_config, data_pin, 1);
+    sm_config_set_out_shift(&sm_config, false, false, 32);
+
+    pio_sm_init(pio, sm, offset, &sm_config);
+
+    uint pin_mask = (1u << data_pin) | (3u << (lrckl_pin-1));
+    uint pin_dirs = (1u << data_pin) | (0u << lrckl_pin) | (0u << (lrckl_pin-1));
+    pio_sm_set_pindirs_with_mask(pio, sm, pin_dirs, pin_mask);
+
+    pio_gpio_init(pio, data_pin);
+    pio_gpio_init(pio, lrckl_pin);
+    pio_gpio_init(pio, lrckl_pin-1);
+}
+
+static inline void read_pio_program_init(PIO pio, uint sm, uint offset, uint read_pin, uint lrckl_pin) {
+    pio_sm_config sm_config = read_pio_program_get_default_config(offset);
+
+    sm_config_set_in_pins(&sm_config, read_pin);
+
+    sm_config_set_in_shift(&sm_config, false, true, 32);
+    sm_config_set_fifo_join(&sm_config, PIO_FIFO_JOIN_RX);
+
+    pio_sm_init(pio, sm, offset, &sm_config);
+
+    uint pin_mask = (1u << read_pin) | (3u << (lrckl_pin-1));
+    uint pin_dirs = (0u << read_pin) | (0u << lrckl_pin) | (0u << (lrckl_pin-1));
+    pio_sm_set_pindirs_with_mask(pio, sm, pin_dirs, pin_mask);
+
+    pio_gpio_init(pio, read_pin);
+    pio_gpio_init(pio, lrckl_pin);
+    pio_gpio_init(pio, lrckl_pin-1);
+}
+
+%}

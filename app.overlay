@@ -1,4 +1,64 @@
 #include <zephyr/dt-bindings/i2c/i2c.h>
+#include <mem.h>
+
+&sram0 {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	ranges = <0x0 0x20000000 DT_SIZE_K(520)>;
+
+	sram0_cpu0: memory@0 {
+		compatible = "mmio-sram";
+		reg = <0x0 DT_SIZE_K(448)>;
+	};
+
+	sram_gap: memory@70000 {
+		compatible = "mmio-sram";
+		reg = <0x70000 DT_SIZE_K(16)>;
+	};
+
+	sram0_cpu1: memory@74000 {
+		compatible = "mmio-sram";
+		reg = <0x74000 DT_SIZE_K(48)>;
+	};
+
+	sram8: memory@80000 {
+		compatible = "mmio-sram";
+		reg = <0x80000 DT_SIZE_K(4)>;
+	};
+
+	sram9: memory@81000 {
+		compatible = "mmio-sram";
+		reg = <0x81000 DT_SIZE_K(4)>;
+	};
+};
+
+/ {
+	chosen {
+		zephyr,sram = &sram0_cpu0;
+		zephyr,sram-cpu1-partition = &sram0_cpu1;
+	};
+};
+
+&flash0 {
+	partitions {
+		ranges;
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		code_partition: partition@0 {
+			compatible = "zephyr,mapped-partition";
+			label = "cpu0-code";
+			reg = <0x0 DT_SIZE_M(2)>;
+			read-only;
+		};
+
+		storage_partition: partition@200000 {
+			compatible = "zephyr,mapped-partition";
+			label = "storage";
+			reg = <0x200000 DT_SIZE_M(2)>;
+		};
+	};
+};
 
 &pinctrl {
 	uart0_gp16_default: uart0_gp16_default {
