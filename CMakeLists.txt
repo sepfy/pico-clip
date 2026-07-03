@@ -52,6 +52,7 @@ zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/audio_pio)
 
 FILE(GLOB app_sources src/*.c)
 list(REMOVE_ITEM app_sources ${CMAKE_CURRENT_SOURCE_DIR}/src/pio_i2s.c)
+list(REMOVE_ITEM app_sources ${CMAKE_CURRENT_SOURCE_DIR}/src/es8311_birthday.c)
 target_sources(app PRIVATE ${app_sources})
 target_sources(app PRIVATE ${ZEPHYR_HAL_RPI_PICO_MODULE_DIR}/src/rp2_common/hardware_dma/dma.c)
 target_link_libraries(app PRIVATE opus)
