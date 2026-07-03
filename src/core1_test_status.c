@@ -25,6 +25,8 @@
 
 #define CPU1_SRAM_ADDR DT_REG_ADDR(DT_CHOSEN(zephyr_sram_cpu1_partition))
 #define CPU1_SRAM_SIZE DT_REG_SIZE(DT_CHOSEN(zephyr_sram_cpu1_partition))
+#define CORE1_LOOPBACK_BUFFER_ADDR DT_REG_ADDR(DT_NODELABEL(sram_gap))
+#define CORE1_LOOPBACK_BUFFER_SIZE DT_REG_SIZE(DT_NODELABEL(sram_gap))
 
 #define CORE1_FIFO_TIMEOUT_LOOPS 100000U
 #define CORE1_I2C_DELAY_LOOPS 80U
@@ -57,14 +59,19 @@
 #define ES8311_MCLK_HZ (ES8311_SAMPLE_RATE * 256U)
 #define ES8311_PA_CTRL_GPIO 0U
 #define ES8311_DOUT_GPIO 1U
+#define ES8311_DIN_GPIO 2U
 #define ES8311_SDA_GPIO 6U
 #define ES8311_SCL_GPIO 7U
 #define ES8311_MCLK_GPIO 3U
+#define ES8311_BCLK_GPIO 4U
 #define ES8311_LRCLK_GPIO 5U
 #define ES8311_BAT_EN_GPIO 28U
 #define ES8311_BIRTHDAY_SAMPLES 124800U
+#define ES8311_LOOPBACK_SAMPLES (CORE1_LOOPBACK_BUFFER_SIZE / sizeof(int16_t))
 #define ES8311_BIRTHDAY_DAC_VOLUME 0x98U
 #define ES8311_BIRTHDAY_ADC_GAIN 0x03U
+#define ES8311_LOOPBACK_DAC_VOLUME ES8311_BIRTHDAY_DAC_VOLUME
+#define ES8311_LOOPBACK_ADC_GAIN ES8311_BIRTHDAY_ADC_GAIN
 
 #define CORE1_AUDIO_PROGRESS_GPIO 1U
 #define CORE1_AUDIO_PROGRESS_I2C_PINS 2U
@@ -75,12 +82,16 @@
 #define CORE1_AUDIO_PROGRESS_READY 7U
 #define CORE1_AUDIO_PROGRESS_DMA_PLAY 8U
 #define CORE1_AUDIO_PROGRESS_DONE 9U
+#define CORE1_AUDIO_PROGRESS_DIN_PIO 10U
+#define CORE1_AUDIO_PROGRESS_LOOPBACK 11U
 
 extern const int16_t Happy_birsday[];
 
 static bool core1_audio_ready;
 static bool core1_audio_pio_ready;
+static bool core1_audio_din_ready;
 static uint core1_audio_dma_chan = UINT_MAX;
+static uint core1_audio_rx_dma_chan = UINT_MAX;
 
 static inline bool core1_fifo_write_ready(void)
 {
@@ -561,8 +572,10 @@ static int core1_es8311_hw_init(void)
 
 		shm->audio_progress = CORE1_AUDIO_PROGRESS_I2S_PIO;
 		core1_gpio_set_func_pio(ES8311_DOUT_GPIO, i2s_pio);
+		core1_gpio_set_func_pio(ES8311_BCLK_GPIO, i2s_pio);
 		core1_gpio_set_func_pio(ES8311_LRCLK_GPIO, i2s_pio);
 		core1_gpio_pad_init(ES8311_DOUT_GPIO, false);
+		core1_gpio_pad_init(ES8311_BCLK_GPIO, false);
 		core1_gpio_pad_init(ES8311_LRCLK_GPIO, false);
 		pio_sm_claim(i2s_pio, i2s_sm);
 		offset = pio_add_program(i2s_pio, &audio_pio_program);
@@ -585,6 +598,34 @@ static int core1_es8311_hw_init(void)
 
 	shm->audio_progress = CORE1_AUDIO_PROGRESS_READY;
 	core1_audio_ready = true;
+	return 0;
+}
+
+static int core1_es8311_din_init(volatile struct pico_clip_core1_test_shared *shm)
+{
+	PIO din_pio = pio1;
+	uint din_sm = 1;
+	uint offset;
+
+	if (core1_audio_din_ready) {
+		return 0;
+	}
+
+	shm->audio_progress = CORE1_AUDIO_PROGRESS_DIN_PIO;
+	core1_gpio_set_func_pio(ES8311_DIN_GPIO, din_pio);
+	core1_gpio_set_func_pio(ES8311_BCLK_GPIO, din_pio);
+	core1_gpio_set_func_pio(ES8311_LRCLK_GPIO, din_pio);
+	core1_gpio_pad_init(ES8311_DIN_GPIO, false);
+	core1_gpio_pad_init(ES8311_BCLK_GPIO, false);
+	core1_gpio_pad_init(ES8311_LRCLK_GPIO, false);
+	pio_sm_claim(din_pio, din_sm);
+	offset = pio_add_program(din_pio, &read_pio_program);
+	read_pio_program_init(din_pio, din_sm, offset, ES8311_DIN_GPIO, ES8311_LRCLK_GPIO);
+	pio_sm_set_clkdiv(din_pio, din_sm, 1.0f);
+	pio_sm_clear_fifos(din_pio, din_sm);
+	pio_sm_restart(din_pio, din_sm);
+	pio_sm_set_enabled(din_pio, din_sm, true);
+	core1_audio_din_ready = true;
 	return 0;
 }
 
@@ -667,6 +708,137 @@ static int core1_es8311_play_birthday(volatile struct pico_clip_core1_test_share
 	return 0;
 }
 
+static int core1_es8311_loopback(volatile struct pico_clip_core1_test_shared *shm)
+{
+	PIO tx_pio = pio2;
+	PIO rx_pio = pio1;
+	uint tx_sm = 0;
+	uint rx_sm = 1;
+	int16_t *loopback_buffer = (int16_t *)CORE1_LOOPBACK_BUFFER_ADDR;
+	dma_channel_config rx_config;
+	dma_channel_config tx_config;
+	int ret;
+
+	shm->audio_state = PICO_CLIP_CORE1_AUDIO_INIT;
+	ret = core1_es8311_hw_init();
+	if (ret != 0) {
+		shm->audio_error = ret;
+		shm->audio_state = PICO_CLIP_CORE1_AUDIO_ERROR;
+		return ret;
+	}
+
+	ret = core1_es8311_din_init(shm);
+	if (ret != 0) {
+		shm->audio_error = ret;
+		shm->audio_state = PICO_CLIP_CORE1_AUDIO_ERROR;
+		return ret;
+	}
+
+	if (core1_audio_rx_dma_chan == UINT_MAX) {
+		int dma_chan = dma_claim_unused_channel(false);
+
+		if (dma_chan < 0) {
+			shm->audio_error = -EBUSY;
+			shm->audio_state = PICO_CLIP_CORE1_AUDIO_ERROR;
+			return -EBUSY;
+		}
+		core1_audio_rx_dma_chan = (uint)dma_chan;
+	}
+
+	rx_config = dma_channel_get_default_config(core1_audio_rx_dma_chan);
+	channel_config_set_transfer_data_size(&rx_config, DMA_SIZE_16);
+	channel_config_set_read_increment(&rx_config, false);
+	channel_config_set_write_increment(&rx_config, true);
+	channel_config_set_dreq(&rx_config, pio_get_dreq(rx_pio, rx_sm, false));
+
+	tx_config = dma_channel_get_default_config(core1_audio_dma_chan);
+	channel_config_set_transfer_data_size(&tx_config, DMA_SIZE_16);
+	channel_config_set_read_increment(&tx_config, true);
+	channel_config_set_write_increment(&tx_config, false);
+	channel_config_set_dreq(&tx_config, pio_get_dreq(tx_pio, tx_sm, true));
+
+	(void)core1_es8311_write(ES8311_ADC_REG16, ES8311_LOOPBACK_ADC_GAIN);
+	(void)core1_es8311_write(ES8311_DAC_REG32, ES8311_LOOPBACK_DAC_VOLUME);
+	shm->audio_error = 0;
+	shm->audio_state = PICO_CLIP_CORE1_AUDIO_PLAYING;
+	shm->audio_progress = CORE1_AUDIO_PROGRESS_LOOPBACK;
+
+	while (!core1_audio_stop_requested(shm)) {
+		int16_t min_sample = INT16_MAX;
+		int16_t max_sample = INT16_MIN;
+		uint32_t nonzero = 0;
+
+		pio_sm_clear_fifos(rx_pio, rx_sm);
+		dma_channel_configure(core1_audio_rx_dma_chan,
+				      &rx_config,
+				      loopback_buffer,
+				      &rx_pio->rxf[rx_sm],
+				      ES8311_LOOPBACK_SAMPLES,
+				      true);
+
+		while (dma_channel_is_busy(core1_audio_rx_dma_chan)) {
+			shm->cpu1_heartbeat++;
+			shm->audio_heartbeat++;
+			core1_service_test_command(shm);
+			if (core1_audio_stop_requested(shm)) {
+				dma_channel_abort(core1_audio_rx_dma_chan);
+				pio_sm_clear_fifos(rx_pio, rx_sm);
+				shm->audio_state = PICO_CLIP_CORE1_AUDIO_DONE;
+				shm->audio_progress = CORE1_AUDIO_PROGRESS_DONE;
+				return 0;
+			}
+		}
+
+		for (uint32_t i = 0; i < ES8311_LOOPBACK_SAMPLES; i++) {
+			int16_t sample = loopback_buffer[i];
+
+			if (sample != 0) {
+				nonzero++;
+			}
+			if (sample < min_sample) {
+				min_sample = sample;
+			}
+			if (sample > max_sample) {
+				max_sample = sample;
+			}
+		}
+		shm->audio_sample_min = min_sample;
+		shm->audio_sample_max = max_sample;
+		shm->audio_sample_nonzero = nonzero;
+
+		pio_sm_clear_fifos(tx_pio, tx_sm);
+		pio_sm_put(tx_pio, tx_sm, 0);
+		pio_sm_put(tx_pio, tx_sm, 0);
+		dma_channel_configure(core1_audio_dma_chan,
+				      &tx_config,
+				      &tx_pio->txf[tx_sm],
+				      loopback_buffer,
+				      ES8311_LOOPBACK_SAMPLES,
+				      true);
+
+		while (dma_channel_is_busy(core1_audio_dma_chan)) {
+			shm->cpu1_heartbeat++;
+			shm->audio_heartbeat++;
+			core1_service_test_command(shm);
+			if (core1_audio_stop_requested(shm)) {
+				dma_channel_abort(core1_audio_dma_chan);
+				pio_sm_clear_fifos(tx_pio, tx_sm);
+				shm->audio_state = PICO_CLIP_CORE1_AUDIO_DONE;
+				shm->audio_progress = CORE1_AUDIO_PROGRESS_DONE;
+				return 0;
+			}
+		}
+
+		shm->audio_play_count++;
+	}
+
+	pio_sm_clear_fifos(rx_pio, rx_sm);
+	pio_sm_clear_fifos(tx_pio, tx_sm);
+	shm->audio_state = PICO_CLIP_CORE1_AUDIO_DONE;
+	shm->audio_progress = CORE1_AUDIO_PROGRESS_DONE;
+	return 0;
+}
+
 static void core1_audio_handle_command(volatile struct pico_clip_core1_test_shared *shm)
 {
 	uint32_t seq = shm->cpu0_audio_cmd_seq;
@@ -679,10 +851,16 @@ static void core1_audio_handle_command(volatile struct pico_clip_core1_test_shar
 	shm->cpu1_audio_ack_seq = seq;
 	if (cmd == PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY) {
 		(void)core1_es8311_play_birthday(shm);
+	} else if (cmd == PICO_CLIP_CORE1_AUDIO_CMD_LOOPBACK) {
+		(void)core1_es8311_loopback(shm);
 	} else if (cmd == PICO_CLIP_CORE1_AUDIO_CMD_STOP) {
 		if (core1_audio_dma_chan != UINT_MAX &&
 		    dma_channel_is_busy(core1_audio_dma_chan)) {
 			dma_channel_abort(core1_audio_dma_chan);
+		}
+		if (core1_audio_rx_dma_chan != UINT_MAX &&
+		    dma_channel_is_busy(core1_audio_rx_dma_chan)) {
+			dma_channel_abort(core1_audio_rx_dma_chan);
 		}
 		shm->audio_state = PICO_CLIP_CORE1_AUDIO_DONE;
 	} else {
@@ -837,7 +1015,7 @@ static int cmd_core1_audio_test(const struct shell *sh, size_t argc, char **argv
 
 	if (argc < 2) {
 		shell_print(sh,
-			    "Usage: core1_audio_test start|status|birthday|stop");
+			    "Usage: core1_audio_test start|status|birthday|loopback|stop");
 		return -EINVAL;
 	}
 
@@ -851,6 +1029,12 @@ static int cmd_core1_audio_test(const struct shell *sh, size_t argc, char **argv
 		return core1_audio_send(sh, PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY);
 	}
 
+	if (strcmp(argv[1], "loopback") == 0 ||
+	    strcmp(argv[1], "loop_test") == 0 ||
+	    strcmp(argv[1], "loop") == 0) {
+		return core1_audio_send(sh, PICO_CLIP_CORE1_AUDIO_CMD_LOOPBACK);
+	}
+
 	if (strcmp(argv[1], "stop") == 0 ||
 	    strcmp(argv[1], "es8311_stop") == 0) {
 		return core1_audio_send(sh, PICO_CLIP_CORE1_AUDIO_CMD_STOP);
@@ -858,7 +1042,7 @@ static int cmd_core1_audio_test(const struct shell *sh, size_t argc, char **argv
 
 	if (strcmp(argv[1], "status") != 0) {
 		shell_print(sh,
-			    "Usage: core1_audio_test start|status|birthday|stop");
+			    "Usage: core1_audio_test start|status|birthday|loopback|stop");
 		return -EINVAL;
 	}
 
@@ -892,6 +1076,9 @@ static int cmd_core1_audio_test(const struct shell *sh, size_t argc, char **argv
 		    core1_audio_state_name(shm->audio_state), shm->audio_error,
 		    shm->audio_progress, shm->audio_heartbeat, shm->audio_play_count,
 		    shm->cpu0_audio_cmd_seq, shm->cpu1_audio_ack_seq);
+	shell_print(sh, "core1 audio samples: min=%d max=%d nonzero=%u",
+		    shm->audio_sample_min, shm->audio_sample_max,
+		    shm->audio_sample_nonzero);
 	return 0;
 }
 

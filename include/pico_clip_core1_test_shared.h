@@ -12,6 +12,7 @@
 #define PICO_CLIP_CORE1_AUDIO_CMD_NONE 0u
 #define PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY 1u
 #define PICO_CLIP_CORE1_AUDIO_CMD_STOP 2u
+#define PICO_CLIP_CORE1_AUDIO_CMD_LOOPBACK 3u
 
 #define PICO_CLIP_CORE1_AUDIO_IDLE 0u
 #define PICO_CLIP_CORE1_AUDIO_INIT 1u
@@ -36,6 +37,9 @@ struct pico_clip_core1_test_shared {
 	uint32_t audio_heartbeat;
 	uint32_t audio_play_count;
 	uint32_t audio_progress;
+	int32_t audio_sample_min;
+	int32_t audio_sample_max;
+	uint32_t audio_sample_nonzero;
 };
 
 static inline volatile struct pico_clip_core1_test_shared *pico_clip_core1_test_shm(void)
