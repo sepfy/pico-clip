@@ -39,10 +39,10 @@ zephyr_compile_definitions(
   CONFIG_DTLS_USE_ECDSA=1
   CONFIG_DATA_BUFFER_SIZE=512
   CONFIG_AUDIO_BUFFER_SIZE=2048
-  CONFIG_HTTP_BUFFER_SIZE=1024
+  CONFIG_HTTP_BUFFER_SIZE=2048
   CONFIG_SDP_BUFFER_SIZE=4096
   CONFIG_MAX_NALU_SIZE=8192
-  CONFIG_TLS_READ_TIMEOUT=10
+  CONFIG_TLS_READ_TIMEOUT=10000
   CONFIG_KEEPALIVE_TIMEOUT=30000
 )
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -51,7 +51,6 @@ zephyr_include_directories(${ZEPHYR_HAL_RPI_PICO_MODULE_DIR}/src/rp2_common/hard
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/audio_pio)
 
 FILE(GLOB app_sources src/*.c)
-list(REMOVE_ITEM app_sources ${CMAKE_CURRENT_SOURCE_DIR}/src/pio_i2s.c)
 list(REMOVE_ITEM app_sources ${CMAKE_CURRENT_SOURCE_DIR}/src/es8311_birthday.c)
 target_sources(app PRIVATE ${app_sources})
 target_sources(app PRIVATE ${ZEPHYR_HAL_RPI_PICO_MODULE_DIR}/src/rp2_common/hardware_dma/dma.c)

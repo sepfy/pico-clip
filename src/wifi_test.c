@@ -16,7 +16,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "amp_audio_shared.h"
+#include "pico_clip_core1_test_shared.h"
 
 static struct net_mgmt_event_callback net_cb;
 static K_SEM_DEFINE(ipv4_ready_sem, 0, 1);
@@ -32,6 +32,10 @@ static uint32_t g_audio_send_failed;
 static uint32_t g_audio_dropped;
 static uint32_t g_remote_audio_seq;
 static uint32_t g_remote_audio_dropped;
+static uint32_t g_datachannel_sent;
+static uint32_t g_datachannel_send_failed;
+static bool g_datachannel_created;
+static int64_t g_datachannel_next_create_ms;
 static char g_url[192];
 static char g_token[128];
 static const char g_wifi_ssid[] = "yu_2.4G";
@@ -47,6 +51,14 @@ static struct k_thread signaling_thread;
 K_SEM_DEFINE(signaling_done_sem, 0, 1);
 K_MUTEX_DEFINE(peer_mutex);
 static int peer_test_start(const char *url, const char *token);
+static void peer_lock(void);
+static void peer_unlock(void);
+
+static void webrtc_test_usage(const struct shell *sh)
+{
+	shell_print(sh,
+		    "Usage: webrtc_test start -u <url> [-t <token>] | stop | status | send <text>");
+}
 
 static void wifi_schedule_reconnect(void)
 {
@@ -178,25 +190,25 @@ static void on_net_event(struct net_mgmt_event_callback *cb, uint64_t mgmt_event
 	}
 }
 
-static int cmd_peer_test(const struct shell *sh, size_t argc, char **argv)
+static int webrtc_test_start_cmd(const struct shell *sh, size_t argc, char **argv)
 {
 	const char *url;
 	const char *token = "";
 	int ret;
 
 	if (argc != 3 && argc != 5) {
-		shell_error(sh, "Usage: peer_test -u <url> [-t <token>]");
+		webrtc_test_usage(sh);
 		return -EINVAL;
 	}
 
 	if (strcmp(argv[1], "-u") != 0) {
-		shell_error(sh, "Usage: peer_test -u <url> [-t <token>]");
+		webrtc_test_usage(sh);
 		return -EINVAL;
 	}
 
 	if (argc == 5) {
 		if (strcmp(argv[3], "-t") != 0) {
-			shell_error(sh, "Usage: peer_test -u <url> [-t <token>]");
+			webrtc_test_usage(sh);
 			return -EINVAL;
 		}
 		token = argv[4];
@@ -217,7 +229,11 @@ static int cmd_peer_test(const struct shell *sh, size_t argc, char **argv)
 	}
 
 	url = argv[2];
-	shell_print(sh, "starting peer test with url: %s", url);
+	if ((pico_clip_core1_test_shm()->audio_flags &
+	     PICO_CLIP_CORE1_AUDIO_FLAG_OPUS_READY) == 0U) {
+		shell_print(sh, "warning: core1 Opus is not ready; run core1_audio_test opus");
+	}
+	shell_print(sh, "starting WebRTC test: Opus audio + datachannel, url=%s", url);
 
 	ret = peer_test_start(url, token);
 	if (ret < 0) {
@@ -229,7 +245,92 @@ static int cmd_peer_test(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-SHELL_CMD_REGISTER(peer_test, NULL, "Run peer test: peer_test -u <url>", cmd_peer_test);
+static int cmd_webrtc_test(const struct shell *sh, size_t argc, char **argv)
+{
+	if (argc < 2) {
+		webrtc_test_usage(sh);
+		return -EINVAL;
+	}
+
+	if (strcmp(argv[1], "start") == 0) {
+		return webrtc_test_start_cmd(sh, argc - 1, &argv[1]);
+	}
+
+	if (strcmp(argv[1], "stop") == 0) {
+		if (!peer_running) {
+			shell_print(sh, "WebRTC test is not running");
+			return 0;
+		}
+		peer_stop = true;
+		if (g_pc != NULL) {
+			peer_connection_close(g_pc);
+		}
+		shell_print(sh, "WebRTC test stopping");
+		return 0;
+	}
+
+	if (strcmp(argv[1], "status") == 0) {
+		volatile struct pico_clip_core1_test_shared *shared =
+			pico_clip_core1_test_shm();
+
+		shell_print(sh, "webrtc: running=%u state=%s dc_created=%u",
+			    peer_running,
+			    g_pc != NULL ? peer_connection_state_to_string(g_state) : "none",
+			    g_datachannel_created);
+		shell_print(sh,
+			    "opus tx: sent=%u dropped=%u fail=%u last_seq=%u core1_seq=%u len=%u flags=0x%x",
+			    g_audio_sent, g_audio_dropped, g_audio_send_failed,
+			    g_last_audio_seq, shared->opus_seq, shared->opus_len,
+			    shared->audio_flags);
+		shell_print(sh, "opus rx: queued=%u dropped=%u pending=%u",
+			    g_remote_audio_seq, g_remote_audio_dropped,
+			    shared->spk_opus_write_seq - shared->spk_opus_read_seq);
+		shell_print(sh, "datachannel: sent=%u fail=%u", g_datachannel_sent,
+			    g_datachannel_send_failed);
+		return 0;
+	}
+
+	if (strcmp(argv[1], "send") == 0) {
+		int ret;
+
+		if (argc < 3) {
+			webrtc_test_usage(sh);
+			return -EINVAL;
+		}
+		if (g_pc == NULL || g_state != PEER_CONNECTION_CONNECTED) {
+			shell_error(sh, "WebRTC is not connected");
+			return -ENOTCONN;
+		}
+
+		peer_lock();
+		ret = peer_connection_datachannel_send(g_pc, argv[2], strlen(argv[2]));
+		peer_unlock();
+		if (ret < 0) {
+			g_datachannel_send_failed++;
+			shell_error(sh, "datachannel send failed: %d", ret);
+			return ret;
+		}
+		g_datachannel_sent++;
+		shell_print(sh, "datachannel sent: %s", argv[2]);
+		return 0;
+	}
+
+	webrtc_test_usage(sh);
+	return -EINVAL;
+}
+
+static int cmd_peer_test(const struct shell *sh, size_t argc, char **argv)
+{
+	if (argc >= 2 && strcmp(argv[1], "-u") == 0) {
+		return webrtc_test_start_cmd(sh, argc, argv);
+	}
+
+	return cmd_webrtc_test(sh, argc, argv);
+}
+
+SHELL_CMD_REGISTER(webrtc_test, NULL, "Run WebRTC Opus audio + datachannel test",
+		   cmd_webrtc_test);
+SHELL_CMD_REGISTER(peer_test, NULL, "Alias for webrtc_test", cmd_peer_test);
 
 static int cmd_cpu_freq(const struct shell *sh, size_t argc, char **argv)
 {
@@ -255,9 +356,23 @@ SHELL_CMD_REGISTER(cpu_freq, NULL, "Measure CPU frequency over 1 second.", cmd_c
 
 static void onconnectionstatechange(PeerConnectionState state, void *data)
 {
+	volatile struct pico_clip_core1_test_shared *shared = pico_clip_core1_test_shm();
+	uint32_t seq;
+
 	ARG_UNUSED(data);
 	g_state = state;
 	printk("peer state: %s\n", peer_connection_state_to_string(state));
+
+	if (state == PEER_CONNECTION_CONNECTED &&
+	    shared->magic == PICO_CLIP_CORE1_TEST_MAGIC &&
+	    shared->version == PICO_CLIP_CORE1_TEST_VERSION &&
+	    (shared->audio_flags & PICO_CLIP_CORE1_AUDIO_FLAG_OPUS_READY) == 0U) {
+		seq = shared->cpu0_audio_cmd_seq + 1U;
+		shared->cpu0_audio_cmd = PICO_CLIP_CORE1_AUDIO_CMD_OPUS;
+		shared->cpu0_audio_cmd_seq = seq;
+		__SEV();
+		printk("core1 continuous microphone Opus capture requested seq=%u\n", seq);
+	}
 }
 
 static void onopen(void *user_data)
@@ -290,14 +405,39 @@ static void onmessage(char *msg, size_t len, void *user_data, uint16_t sid)
 static void onaudiotrack(uint8_t *data, size_t size, void *user_data)
 {
 	ARG_UNUSED(user_data);
-	ARG_UNUSED(data);
-	ARG_UNUSED(size);
+	volatile struct pico_clip_core1_test_shared *shared = pico_clip_core1_test_shm();
+	uint32_t write_seq;
+	uint32_t read_seq;
+	uint32_t slot;
 
 	g_remote_audio_seq++;
+	if (shared->magic != PICO_CLIP_CORE1_TEST_MAGIC ||
+	    shared->version != PICO_CLIP_CORE1_TEST_VERSION ||
+	    (shared->audio_flags & PICO_CLIP_CORE1_AUDIO_FLAG_SPK_READY) == 0U ||
+	    size == 0U || size > PICO_CLIP_CORE1_OPUS_MAX_PACKET) {
+		g_remote_audio_dropped++;
+		return;
+	}
+
+	write_seq = shared->spk_opus_write_seq;
+	read_seq = shared->spk_opus_read_seq;
+	if ((write_seq - read_seq) >= PICO_CLIP_CORE1_SPK_OPUS_QUEUE) {
+		shared->spk_opus_dropped++;
+		g_remote_audio_dropped++;
+		return;
+	}
+
+	slot = write_seq % PICO_CLIP_CORE1_SPK_OPUS_QUEUE;
+	shared->spk_opus_slot_seq[slot] = 0;
+	memcpy((void *)shared->spk_opus_packet[slot], data, size);
+	shared->spk_opus_len[slot] = (uint32_t)size;
+	shared->spk_opus_slot_seq[slot] = write_seq + 1U;
+	shared->spk_opus_write_seq = write_seq + 1U;
 
 	if ((g_remote_audio_seq % 50U) == 0U) {
-		printk("remote opus ignored=%u speaker_output=disabled\n",
-		       g_remote_audio_seq);
+		printk("remote opus queued=%u dropped=%u pending=%u\n",
+		       g_remote_audio_seq, g_remote_audio_dropped,
+		       shared->spk_opus_write_seq - shared->spk_opus_read_seq);
 	}
 }
 
@@ -311,10 +451,10 @@ static void peer_unlock(void)
 	k_mutex_unlock(&peer_mutex);
 }
 
-static void peer_send_amp_audio(void)
+static void peer_send_core1_audio(void)
 {
-	volatile struct amp_audio_shared *shared = amp_audio_shared_get();
-	uint8_t packet[AMP_AUDIO_OPUS_MAX_PACKET];
+	volatile struct pico_clip_core1_test_shared *shared = pico_clip_core1_test_shm();
+	uint8_t packet[PICO_CLIP_CORE1_OPUS_MAX_PACKET];
 	uint32_t seq;
 	uint32_t seq_after;
 	uint32_t len;
@@ -324,9 +464,9 @@ static void peer_send_amp_audio(void)
 		return;
 	}
 
-	if (shared->magic != AMP_AUDIO_MAGIC ||
-	    shared->version != AMP_AUDIO_VERSION ||
-	    (shared->flags & AMP_AUDIO_FLAG_OPUS_READY) == 0U) {
+	if (shared->magic != PICO_CLIP_CORE1_TEST_MAGIC ||
+	    shared->version != PICO_CLIP_CORE1_TEST_VERSION ||
+	    (shared->audio_flags & PICO_CLIP_CORE1_AUDIO_FLAG_OPUS_READY) == 0U) {
 		return;
 	}
 
@@ -390,7 +530,7 @@ static void peer_worker(void *a, void *b, void *c)
 	while (!peer_stop) {
 		peer_lock();
 		(void)peer_connection_loop(g_pc);
-		peer_send_amp_audio();
+		peer_send_core1_audio();
 		peer_unlock();
 		if (g_state == PEER_CONNECTION_FAILED || g_state == PEER_CONNECTION_CLOSED) {
 			printk("peer loop exit on state=%s\n", peer_connection_state_to_string(g_state));
@@ -419,7 +559,7 @@ static int peer_test_start(const char *url, const char *token)
 		.ice_servers = {
 			{ .urls = "stun:stun.l.google.com:19302" },
 		},
-		.datachannel = DATA_CHANNEL_STRING,
+		.datachannel = DATA_CHANNEL_NONE,
 		.video_codec = CODEC_NONE,
 		.audio_codec = CODEC_OPUS,
 		.onaudiotrack = onaudiotrack,
@@ -456,6 +596,10 @@ static int peer_test_start(const char *url, const char *token)
 	g_audio_dropped = 0;
 	g_remote_audio_seq = 0;
 	g_remote_audio_dropped = 0;
+	g_datachannel_sent = 0;
+	g_datachannel_send_failed = 0;
+	g_datachannel_created = false;
+	g_datachannel_next_create_ms = 0;
 	k_sem_reset(&signaling_done_sem);
 	k_thread_create(&signaling_thread, signaling_thread_stack,
 			K_THREAD_STACK_SIZEOF(signaling_thread_stack),

@@ -20,3 +20,4 @@ else
 fi
 
 "${WEST_CMD[@]}" build -p always -b "${BOARD}" "${ROOT_DIR}" -d "${BUILD_DIR}" -- -DUSER_CACHE_DIR="${CACHE_DIR}"
+echo "UF2: ${BUILD_DIR}/zephyr/zephyr.uf2"

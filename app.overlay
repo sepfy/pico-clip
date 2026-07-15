@@ -11,14 +11,9 @@
 		reg = <0x0 DT_SIZE_K(448)>;
 	};
 
-	sram_gap: memory@70000 {
+	sram0_cpu1: memory@70000 {
 		compatible = "mmio-sram";
-		reg = <0x70000 DT_SIZE_K(16)>;
-	};
-
-	sram0_cpu1: memory@74000 {
-		compatible = "mmio-sram";
-		reg = <0x74000 DT_SIZE_K(48)>;
+		reg = <0x70000 DT_SIZE_K(64)>;
 	};
 
 	sram8: memory@80000 {

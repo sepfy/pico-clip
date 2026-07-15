@@ -5,6 +5,7 @@
  * DTLS-SRTP path requires the RFC 5764 API from mbedTLS.
  */
 #define MBEDTLS_SSL_DTLS_SRTP
+#define MBEDTLS_SSL_KEEP_PEER_CERTIFICATE
 #define MBEDTLS_TIMING_C
 #define MBEDTLS_TIMING_ALT
 
