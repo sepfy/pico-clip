@@ -371,7 +371,8 @@ static void onconnectionstatechange(PeerConnectionState state, void *data)
 		shared->cpu0_audio_cmd = PICO_CLIP_CORE1_AUDIO_CMD_OPUS;
 		shared->cpu0_audio_cmd_seq = seq;
 		__SEV();
-		printk("core1 continuous microphone Opus capture requested seq=%u\n", seq);
+		printk("core1 20 ms double-buffered microphone Opus stream requested seq=%u\n",
+		       seq);
 	}
 }
 

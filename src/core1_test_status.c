@@ -73,8 +73,12 @@
 #define ES8311_BIRTHDAY_ADC_GAIN 0x03U
 #define ES8311_LOOPBACK_DAC_VOLUME ES8311_BIRTHDAY_DAC_VOLUME
 #define ES8311_LOOPBACK_ADC_GAIN ES8311_BIRTHDAY_ADC_GAIN
-#define CORE1_OPUS_ENCODER_BYTES 20480U
-#define CORE1_OPUS_DECODER_BYTES 20480U
+/* Measured sizes for this mono fixed-point Opus build are 15228 and 18340
+ * bytes.  Keep aligned headroom without unnecessarily consuming the core1
+ * stack, which shares this 64 KiB SRAM partition and grows down from its end.
+ */
+#define CORE1_OPUS_ENCODER_BYTES 15616U
+#define CORE1_OPUS_DECODER_BYTES 18752U
 #define CORE1_WORK_BASE (CPU1_SRAM_ADDR + 0x100U)
 #define CORE1_OPUS_ENCODER_ADDR CORE1_WORK_BASE
 #define CORE1_OPUS_DECODER_ADDR (CORE1_OPUS_ENCODER_ADDR + CORE1_OPUS_ENCODER_BYTES)
@@ -728,14 +732,14 @@ static int core1_opus_init(volatile struct pico_clip_core1_test_shared *shm)
 	}
 
 	ret = opus_encoder_init(core1_opus_encoder(), PICO_CLIP_CORE1_OPUS_SAMPLE_RATE,
-				PICO_CLIP_CORE1_OPUS_CHANNELS, OPUS_APPLICATION_VOIP);
+				PICO_CLIP_CORE1_OPUS_CHANNELS, OPUS_APPLICATION_AUDIO);
 	if (ret != OPUS_OK) {
 		return ret;
 	}
 	(void)opus_encoder_ctl(core1_opus_encoder(),
 			       OPUS_SET_BITRATE(PICO_CLIP_CORE1_OPUS_BITRATE));
 	(void)opus_encoder_ctl(core1_opus_encoder(), OPUS_SET_COMPLEXITY(0));
-	(void)opus_encoder_ctl(core1_opus_encoder(), OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
+	(void)opus_encoder_ctl(core1_opus_encoder(), OPUS_SET_SIGNAL(OPUS_SIGNAL_MUSIC));
 
 	ret = opus_decoder_get_size(PICO_CLIP_CORE1_OPUS_CHANNELS);
 	shm->opus_decoder_size = ret > 0 ? (uint32_t)ret : 0U;
@@ -812,9 +816,6 @@ static int core1_play_pcm_frame(volatile struct pico_clip_core1_test_shared *shm
 	PIO tx_pio = pio2;
 	uint tx_sm = 0;
 
-	pio_sm_clear_fifos(tx_pio, tx_sm);
-	pio_sm_put(tx_pio, tx_sm, 0);
-	pio_sm_put(tx_pio, tx_sm, 0);
 	dma_channel_configure(core1_audio_dma_chan,
 			      tx_config,
 			      &tx_pio->txf[tx_sm],
@@ -932,10 +933,10 @@ static int core1_es8311_play_birthday(volatile struct pico_clip_core1_test_share
 	channel_config_set_dreq(&tx_config, pio_get_dreq(i2s_pio, i2s_sm, true));
 
 	shm->audio_error = 0;
+	pio_sm_clear_fifos(i2s_pio, i2s_sm);
 	while (!core1_audio_stop_requested(shm)) {
 		shm->audio_state = PICO_CLIP_CORE1_AUDIO_PLAYING;
 		shm->audio_progress = CORE1_AUDIO_PROGRESS_DMA_PLAY;
-		pio_sm_clear_fifos(i2s_pio, i2s_sm);
 		dma_channel_configure(core1_audio_dma_chan,
 				      &tx_config,
 				      &i2s_pio->txf[i2s_sm],
@@ -957,7 +958,6 @@ static int core1_es8311_play_birthday(volatile struct pico_clip_core1_test_share
 			core1_delay_loops(2000U);
 		}
 
-		pio_sm_clear_fifos(i2s_pio, i2s_sm);
 		shm->audio_play_count++;
 	}
 
@@ -1149,6 +1149,110 @@ static int core1_birthday_stream(volatile struct pico_clip_core1_test_shared *sh
 	return 0;
 }
 
+static int core1_birthday_codec_loopback(
+	volatile struct pico_clip_core1_test_shared *shm)
+{
+	PIO tx_pio = pio2;
+	uint tx_sm = 0;
+	dma_channel_config tx_config;
+	int16_t *decoded[2] = { core1_opus_pcm_frame(), core1_opus_pcm_alt_frame() };
+	uint32_t decoded_samples[2] = { 0, 0 };
+	uint32_t play_index = 0;
+	uint32_t offset = 0;
+	uint32_t opus_seq = shm->opus_seq;
+	int ret;
+
+	shm->audio_state = PICO_CLIP_CORE1_AUDIO_INIT;
+	ret = core1_es8311_hw_init();
+	if (ret != 0) {
+		shm->audio_error = ret;
+		shm->audio_state = PICO_CLIP_CORE1_AUDIO_ERROR;
+		return ret;
+	}
+
+	ret = core1_opus_init(shm);
+	if (ret != 0) {
+		shm->audio_error = ret;
+		shm->audio_state = PICO_CLIP_CORE1_AUDIO_ERROR;
+		return ret;
+	}
+
+	tx_config = dma_channel_get_default_config(core1_audio_dma_chan);
+	channel_config_set_transfer_data_size(&tx_config, DMA_SIZE_16);
+	channel_config_set_read_increment(&tx_config, true);
+	channel_config_set_write_increment(&tx_config, false);
+	channel_config_set_dreq(&tx_config, pio_get_dreq(tx_pio, tx_sm, true));
+	(void)core1_es8311_write(ES8311_DAC_REG32, ES8311_BIRTHDAY_DAC_VOLUME);
+	pio_sm_clear_fifos(tx_pio, tx_sm);
+
+	shm->audio_error = 0;
+	shm->audio_state = PICO_CLIP_CORE1_AUDIO_PLAYING;
+	shm->audio_progress = CORE1_AUDIO_PROGRESS_OPUS;
+
+	/* Prime the first decoded buffer, then overlap DMA playback of one buffer
+	 * with encode/decode into the other buffer. */
+	ret = core1_publish_mic_opus(shm, (int16_t *)&Happy_birsday[offset], &opus_seq);
+	if (ret == 0) {
+		ret = opus_decode(core1_opus_decoder(), core1_opus_packet_tmp(),
+				  (opus_int32)shm->opus_len, decoded[play_index],
+				  PICO_CLIP_CORE1_OPUS_FRAME_SAMPLES, 0);
+	}
+	if (ret < 0) {
+		shm->audio_error = ret;
+		shm->audio_state = PICO_CLIP_CORE1_AUDIO_ERROR;
+		return ret;
+	}
+	decoded_samples[play_index] = (uint32_t)ret;
+	offset += PICO_CLIP_CORE1_OPUS_FRAME_SAMPLES;
+
+	while (!core1_audio_stop_requested(shm)) {
+		uint32_t fill_index = play_index ^ 1U;
+
+		dma_channel_configure(core1_audio_dma_chan, &tx_config,
+				      &tx_pio->txf[tx_sm], decoded[play_index],
+				      decoded_samples[play_index], true);
+
+		if (offset >= ES8311_BIRTHDAY_SAMPLES) {
+			offset = 0;
+		}
+		ret = core1_publish_mic_opus(
+			shm, (int16_t *)&Happy_birsday[offset], &opus_seq);
+		if (ret == 0) {
+			ret = opus_decode(core1_opus_decoder(), core1_opus_packet_tmp(),
+					  (opus_int32)shm->opus_len, decoded[fill_index],
+					  PICO_CLIP_CORE1_OPUS_FRAME_SAMPLES, 0);
+		}
+		if (ret < 0) {
+			shm->audio_error = ret;
+			shm->spk_opus_dropped++;
+			dma_channel_wait_for_finish_blocking(core1_audio_dma_chan);
+			continue;
+		}
+		decoded_samples[fill_index] = (uint32_t)ret;
+		offset += PICO_CLIP_CORE1_OPUS_FRAME_SAMPLES;
+
+		while (dma_channel_is_busy(core1_audio_dma_chan)) {
+			shm->cpu1_heartbeat++;
+			shm->audio_heartbeat++;
+			core1_service_test_command(shm);
+			if (core1_audio_stop_requested(shm)) {
+				dma_channel_abort(core1_audio_dma_chan);
+				goto birthday_codec_done;
+			}
+		}
+
+		shm->opus_decode_count++;
+		shm->audio_play_count++;
+		play_index = fill_index;
+	}
+
+birthday_codec_done:
+	pio_sm_clear_fifos(tx_pio, tx_sm);
+	shm->audio_state = PICO_CLIP_CORE1_AUDIO_DONE;
+	shm->audio_progress = CORE1_AUDIO_PROGRESS_DONE;
+	return 0;
+}
+
 static int core1_es8311_loopback(volatile struct pico_clip_core1_test_shared *shm)
 {
 	PIO tx_pio = pio2;
@@ -1203,13 +1307,14 @@ static int core1_es8311_loopback(volatile struct pico_clip_core1_test_shared *sh
 	shm->audio_error = 0;
 	shm->audio_state = PICO_CLIP_CORE1_AUDIO_PLAYING;
 	shm->audio_progress = CORE1_AUDIO_PROGRESS_LOOPBACK;
+	pio_sm_clear_fifos(rx_pio, rx_sm);
+	pio_sm_clear_fifos(tx_pio, tx_sm);
 
 	while (!core1_audio_stop_requested(shm)) {
 		int16_t min_sample = INT16_MAX;
 		int16_t max_sample = INT16_MIN;
 		uint32_t nonzero = 0;
 
-		pio_sm_clear_fifos(rx_pio, rx_sm);
 		dma_channel_configure(core1_audio_rx_dma_chan,
 				      &rx_config,
 				      loopback_buffer,
@@ -1247,9 +1352,6 @@ static int core1_es8311_loopback(volatile struct pico_clip_core1_test_shared *sh
 		shm->audio_sample_max = max_sample;
 		shm->audio_sample_nonzero = nonzero;
 
-		pio_sm_clear_fifos(tx_pio, tx_sm);
-		pio_sm_put(tx_pio, tx_sm, 0);
-		pio_sm_put(tx_pio, tx_sm, 0);
 		dma_channel_configure(core1_audio_dma_chan,
 				      &tx_config,
 				      &tx_pio->txf[tx_sm],
@@ -1280,7 +1382,8 @@ static int core1_es8311_loopback(volatile struct pico_clip_core1_test_shared *sh
 	return 0;
 }
 
-static int core1_es8311_opus(volatile struct pico_clip_core1_test_shared *shm)
+static int core1_es8311_opus(volatile struct pico_clip_core1_test_shared *shm,
+			     bool local_loopback)
 {
 	PIO tx_pio = pio2;
 	PIO rx_pio = pio1;
@@ -1391,9 +1494,24 @@ static int core1_es8311_opus(volatile struct pico_clip_core1_test_shared *shm)
 		shm->audio_sample_max = max_sample;
 		shm->audio_sample_nonzero = nonzero;
 
-		(void)core1_publish_mic_opus(shm, completed, &opus_seq);
-
-		(void)core1_decode_speaker_packet(shm, &tx_config);
+		ret = core1_publish_mic_opus(shm, completed, &opus_seq);
+		if (ret == 0 && local_loopback) {
+			ret = opus_decode(core1_opus_decoder(), core1_opus_packet_tmp(),
+					  (opus_int32)shm->opus_len,
+					  core1_opus_spk_frame(),
+					  PICO_CLIP_CORE1_OPUS_FRAME_SAMPLES, 0);
+			if (ret < 0) {
+				shm->audio_error = ret;
+				shm->spk_opus_dropped++;
+			} else if (core1_play_pcm_frame(shm, &tx_config,
+							 core1_opus_spk_frame(),
+							 (uint32_t)ret) == 0) {
+				shm->opus_decode_count++;
+				shm->audio_play_count++;
+			}
+		} else if (!local_loopback) {
+			(void)core1_decode_speaker_packet(shm, &tx_config);
+		}
 		shm->cpu1_heartbeat++;
 		shm->audio_heartbeat++;
 		core1_service_test_command(shm);
@@ -1428,13 +1546,17 @@ static void core1_audio_handle_command(volatile struct pico_clip_core1_test_shar
 	} else if (cmd == PICO_CLIP_CORE1_AUDIO_CMD_LOOPBACK) {
 		(void)core1_es8311_loopback(shm);
 	} else if (cmd == PICO_CLIP_CORE1_AUDIO_CMD_OPUS) {
-		(void)core1_es8311_opus(shm);
+		(void)core1_es8311_opus(shm, false);
+	} else if (cmd == PICO_CLIP_CORE1_AUDIO_CMD_MIC_OPUS_LOOPBACK) {
+		(void)core1_es8311_opus(shm, true);
 	} else if (cmd == PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY_OPUS) {
 		(void)core1_birthday_opus(shm);
 	} else if (cmd == PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY_20MS) {
 		(void)core1_birthday_20ms(shm);
 	} else if (cmd == PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY_STREAM) {
 		(void)core1_birthday_stream(shm);
+	} else if (cmd == PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY_CODEC_LOOPBACK) {
+		(void)core1_birthday_codec_loopback(shm);
 	} else if (cmd == PICO_CLIP_CORE1_AUDIO_CMD_STOP) {
 		if (core1_audio_dma_chan != UINT_MAX &&
 		    dma_channel_is_busy(core1_audio_dma_chan)) {
@@ -1622,6 +1744,11 @@ static int cmd_core1_audio_test(const struct shell *sh, size_t argc, char **argv
 		return core1_audio_send(sh, PICO_CLIP_CORE1_AUDIO_CMD_OPUS);
 	}
 
+	if (strcmp(argv[1], "mic_opus_loopback") == 0 ||
+	    strcmp(argv[1], "opus_loopback") == 0) {
+		return core1_audio_send(sh, PICO_CLIP_CORE1_AUDIO_CMD_MIC_OPUS_LOOPBACK);
+	}
+
 	if (strcmp(argv[1], "birthday_opus") == 0) {
 		return core1_audio_send(sh, PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY_OPUS);
 	}
@@ -1632,6 +1759,12 @@ static int cmd_core1_audio_test(const struct shell *sh, size_t argc, char **argv
 
 	if (strcmp(argv[1], "birthday_stream") == 0) {
 		return core1_audio_send(sh, PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY_STREAM);
+	}
+
+	if (strcmp(argv[1], "birthday_codec_loopback") == 0 ||
+	    strcmp(argv[1], "birthday_loopback") == 0) {
+		return core1_audio_send(
+			sh, PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY_CODEC_LOOPBACK);
 	}
 
 	if (strcmp(argv[1], "stop") == 0 ||
