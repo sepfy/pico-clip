@@ -30,11 +30,25 @@
 #define _DEV_CONFIG_H_
 
 #include <stdio.h>
+#if !defined(PICO_CLIP_ZEPHYR_CORE1)
 #include "pico/stdlib.h"
+#else
+#include <stdint.h>
+#include "hardware/gpio.h"
+#endif
 #include "hardware/spi.h"
 #include "hardware/i2c.h"
 #include "hardware/pwm.h"
 #include "hardware/dma.h"
+
+#if defined(PICO_CLIP_ZEPHYR_CORE1)
+static inline int core1_audio_noop_printf(const char *format, ...)
+{
+    (void)format;
+    return 0;
+}
+#define printf core1_audio_noop_printf
+#endif
 
 extern uint dma_channel;
 extern dma_channel_config dma_config;
@@ -42,7 +56,7 @@ extern dma_channel_config dma_config;
 #define PLL_SYS_KHZ 150 * 1000
 
 #define LCD_SPI_PORT    (spi1)
-#define SENSOR_I2C_PORT (i2c1)
+#define SENSOR_I2C_PORT ((i2c_inst_t *)0)
 
 /**
  * GPIOI config

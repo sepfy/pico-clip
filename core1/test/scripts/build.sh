@@ -7,7 +7,8 @@ test_mode="${CORE1_TEST_MODE:-loopback}"
 
 case "${test_mode}" in
     loopback|birthday) ;;
-    *) echo "CORE1_TEST_MODE must be loopback or birthday" >&2; exit 2 ;;
+    opus) ;;
+    *) echo "CORE1_TEST_MODE must be loopback, opus, or birthday" >&2; exit 2 ;;
 esac
 
 build_dir="${app_dir}/build_${test_mode}"

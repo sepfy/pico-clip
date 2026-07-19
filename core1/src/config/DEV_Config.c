@@ -28,6 +28,126 @@
 ******************************************************************************/
 #include "DEV_Config.h"
 
+#include "hardware/structs/iobank0.h"
+#include "hardware/structs/padsbank0.h"
+#include "hardware/structs/sio.h"
+
+#define CORE1_I2C_DELAY_LOOPS 80U
+
+static void core1_i2c_delay(void)
+{
+    for (volatile uint32_t i = 0; i < CORE1_I2C_DELAY_LOOPS; i++) {
+    }
+}
+
+static void core1_i2c_set_dir(uint gpio, bool output)
+{
+    if (output) sio_hw->gpio_oe_set = 1u << gpio;
+    else sio_hw->gpio_oe_clr = 1u << gpio;
+}
+
+static void core1_i2c_sda_high(void)
+{
+    core1_i2c_set_dir(ES8311_SDA_PIN, false);
+    core1_i2c_delay();
+}
+
+static void core1_i2c_sda_low(void)
+{
+    sio_hw->gpio_clr = 1u << ES8311_SDA_PIN;
+    core1_i2c_set_dir(ES8311_SDA_PIN, true);
+    core1_i2c_delay();
+}
+
+static void core1_i2c_scl_high(void)
+{
+    core1_i2c_set_dir(ES8311_SCL_PIN, false);
+    for (uint32_t i = 0; i < 1000U &&
+         (sio_hw->gpio_in & (1u << ES8311_SCL_PIN)) == 0U; i++) {
+        core1_i2c_delay();
+    }
+    core1_i2c_delay();
+}
+
+static void core1_i2c_scl_low(void)
+{
+    sio_hw->gpio_clr = 1u << ES8311_SCL_PIN;
+    core1_i2c_set_dir(ES8311_SCL_PIN, true);
+    core1_i2c_delay();
+}
+
+static void core1_i2c_start(void)
+{
+    core1_i2c_sda_high();
+    core1_i2c_scl_high();
+    core1_i2c_sda_low();
+    core1_i2c_scl_low();
+}
+
+static void core1_i2c_stop(void)
+{
+    core1_i2c_sda_low();
+    core1_i2c_scl_high();
+    core1_i2c_sda_high();
+}
+
+static bool core1_i2c_write_byte(uint8_t value)
+{
+    for (int bit = 7; bit >= 0; bit--) {
+        if ((value & (1u << bit)) != 0U) core1_i2c_sda_high();
+        else core1_i2c_sda_low();
+        core1_i2c_scl_high();
+        core1_i2c_scl_low();
+    }
+    core1_i2c_sda_high();
+    core1_i2c_scl_high();
+    bool ack = (sio_hw->gpio_in & (1u << ES8311_SDA_PIN)) == 0U;
+    core1_i2c_scl_low();
+    return ack;
+}
+
+static uint8_t core1_i2c_read_byte(bool ack)
+{
+    uint8_t value = 0;
+    core1_i2c_sda_high();
+    for (int bit = 7; bit >= 0; bit--) {
+        core1_i2c_scl_high();
+        if ((sio_hw->gpio_in & (1u << ES8311_SDA_PIN)) != 0U)
+            value |= 1u << bit;
+        core1_i2c_scl_low();
+    }
+    if (ack) core1_i2c_sda_low();
+    else core1_i2c_sda_high();
+    core1_i2c_scl_high();
+    core1_i2c_scl_low();
+    core1_i2c_sda_high();
+    return value;
+}
+
+static void core1_i2c_init_pins(void)
+{
+    iobank0_hw->io[ES8311_SDA_PIN].ctrl = GPIO_FUNC_SIO;
+    iobank0_hw->io[ES8311_SCL_PIN].ctrl = GPIO_FUNC_SIO;
+    padsbank0_hw->io[ES8311_SDA_PIN] = PADS_BANK0_GPIO0_IE_BITS |
+        PADS_BANK0_GPIO0_SCHMITT_BITS | PADS_BANK0_GPIO0_PUE_BITS;
+    padsbank0_hw->io[ES8311_SCL_PIN] = PADS_BANK0_GPIO0_IE_BITS |
+        PADS_BANK0_GPIO0_SCHMITT_BITS | PADS_BANK0_GPIO0_PUE_BITS;
+    sio_hw->gpio_clr = (1u << ES8311_SDA_PIN) | (1u << ES8311_SCL_PIN);
+    core1_i2c_set_dir(ES8311_SDA_PIN, false);
+    core1_i2c_set_dir(ES8311_SCL_PIN, false);
+    core1_i2c_delay();
+}
+
+static void core1_output_init(uint gpio, bool value)
+{
+    iobank0_hw->io[gpio].ctrl = GPIO_FUNC_SIO;
+    padsbank0_hw->io[gpio] = PADS_BANK0_GPIO0_IE_BITS |
+        PADS_BANK0_GPIO0_SCHMITT_BITS;
+    if (value) sio_hw->gpio_set = 1u << gpio;
+    else sio_hw->gpio_clr = 1u << gpio;
+    sio_hw->gpio_oe_set = 1u << gpio;
+}
+
 uint slice_num;
 uint dma_channel;
 dma_channel_config dma_config;
@@ -38,7 +158,9 @@ dma_channel_config dma_config;
  */
 void DEV_Delay_Ms(uint32_t xms)
 {
-    sleep_ms(xms);
+    for (volatile uint32_t i = 0; i < xms * 37500U; i++) {
+        __asm volatile ("nop");
+    }
 }
 
 /**
@@ -47,7 +169,9 @@ void DEV_Delay_Ms(uint32_t xms)
  */
 void DEV_Delay_Us(uint32_t xus)
 {
-    sleep_us(xus);
+    for (volatile uint32_t i = 0; i < xus * 37U; i++) {
+        __asm volatile ("nop");
+    }
 }
 
 /**
@@ -107,8 +231,12 @@ void DEV_SPI_Write_nByte(spi_inst_t *SPI_PORT,uint8_t pData[], uint32_t Len)
  */
 void DEV_I2C_Write_Byte(i2c_inst_t *I2C_PORT,uint8_t addr, uint8_t reg, uint8_t Value)
 {
-    uint8_t data[2] = {reg, Value};
-    i2c_write_blocking(I2C_PORT, addr, data, 2, false);
+    (void)I2C_PORT;
+    core1_i2c_start();
+    (void)core1_i2c_write_byte((uint8_t)(addr << 1));
+    (void)core1_i2c_write_byte(reg);
+    (void)core1_i2c_write_byte(Value);
+    core1_i2c_stop();
 }
 
 /**
@@ -132,10 +260,15 @@ void DEV_I2C_Write_nByte(i2c_inst_t *I2C_PORT,uint8_t addr, uint8_t *pData, uint
  */
 uint8_t DEV_I2C_Read_Byte(i2c_inst_t *I2C_PORT,uint8_t addr, uint8_t reg)
 {
-    uint8_t buf;
-    i2c_write_blocking(I2C_PORT,addr,&reg,1,true);
-    i2c_read_blocking(I2C_PORT,addr,&buf,1,false);
-    return buf;
+    (void)I2C_PORT;
+    core1_i2c_start();
+    (void)core1_i2c_write_byte((uint8_t)(addr << 1));
+    (void)core1_i2c_write_byte(reg);
+    core1_i2c_start();
+    (void)core1_i2c_write_byte((uint8_t)((addr << 1) | 1U));
+    uint8_t value = core1_i2c_read_byte(false);
+    core1_i2c_stop();
+    return value;
 }
 
 /**
@@ -207,25 +340,9 @@ void DEV_SET_IRQ(uint gpio, uint32_t events, gpio_irq_callback_t callback)
  */
 uint8_t DEV_Module_Init(void)
 {
-    stdio_init_all();   
-    sleep_ms(1000);
-    DEV_GPIO_Init();
-    
-    // I2C Initialisation. Using it at 100Khz.
-    i2c_init(SENSOR_I2C_PORT, 400 * 1000);
-    gpio_set_function(ES8311_SDA_PIN, GPIO_FUNC_I2C);
-    gpio_set_function(ES8311_SCL_PIN, GPIO_FUNC_I2C);
-    gpio_set_pulls(ES8311_SDA_PIN, true, false);
-    gpio_set_pulls(ES8311_SCL_PIN, true, false);
-
-    // DMA
-    dma_channel = dma_claim_unused_channel(true);   
-    dma_config = dma_channel_get_default_config(dma_channel);
-    channel_config_set_transfer_data_size(&dma_config, DMA_SIZE_16); 
-    channel_config_set_read_increment(&dma_config, true);
-    channel_config_set_write_increment(&dma_config, false);
-    
-    printf("DEV_Module_Init OK \r\n");
+    core1_output_init(PA_CTRL, true);
+    core1_output_init(BAT_EN, true);
+    core1_i2c_init_pins();
     return 0;
 }
 

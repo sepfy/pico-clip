@@ -1,7 +1,20 @@
 # Core1 audio standalone test
 
 Standalone RP2350/Pico SDK firmware that builds the audio implementation from
-`../src` and runs the original Waveshare `Loopback_Test()` example.
+`../src` and runs the Waveshare audio tests or the 20 ms Opus loopback.
+
+Build modes:
+
+```sh
+./scripts/build.sh
+CORE1_TEST_MODE=opus ./scripts/build.sh
+CORE1_TEST_MODE=birthday ./scripts/build.sh
+```
+
+The Opus mode captures 480 mono samples at 24 kHz with ping-pong RX DMA and
+encodes each frame outside the DMA IRQ. It buffers 25 encoded 20 ms packets to
+produce a 500 ms loopback delay, then decodes into ping-pong TX DMA buffers. It
+uses fixed-point Opus at 24 kbit/s and complexity 0.
 This directory contains only the test entry point and build support needed to
 produce a firmware image before the audio code is integrated into AMP Core1.
 

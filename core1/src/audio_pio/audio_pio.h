@@ -30,7 +30,12 @@
 #ifndef _PICO_AUDIO_PIO_H
 #define _PICO_AUDIO_PIO_H
 
+#if !defined(PICO_CLIP_ZEPHYR_CORE1)
 #include "pico/stdlib.h"
+#else
+#include <stdbool.h>
+#include <stdint.h>
+#endif
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
 
@@ -146,6 +151,7 @@ void Sine_440hz_Out();
  * @brief Audio loopback test - record and playback simultaneously using DMA
  */
 void Loopback_Test();
+
 
 /**
  * @brief Play music audio sequence using DMA

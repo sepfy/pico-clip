@@ -49,9 +49,25 @@ zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 zephyr_include_directories(${ZEPHYR_HAL_RPI_PICO_MODULE_DIR}/src/rp2_common/hardware_dma/include)
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/audio_pio)
+zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/core1/src)
+zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/core1/src/audio_pio)
+zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/core1/src/audio_data)
+zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/core1/src/config)
+zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/core1/src/es8311)
+zephyr_include_directories(${ZEPHYR_HAL_RPI_PICO_MODULE_DIR}/src/common/pico_stdlib_headers/include)
+zephyr_include_directories(${ZEPHYR_HAL_RPI_PICO_MODULE_DIR}/src/rp2_common/hardware_i2c/include)
+zephyr_include_directories(${ZEPHYR_HAL_RPI_PICO_MODULE_DIR}/src/rp2_common/hardware_spi/include)
+zephyr_include_directories(${ZEPHYR_HAL_RPI_PICO_MODULE_DIR}/src/rp2_common/hardware_pwm/include)
+zephyr_compile_definitions(PICO_CLIP_ZEPHYR_CORE1=1)
 
 FILE(GLOB app_sources src/*.c)
 list(REMOVE_ITEM app_sources ${CMAKE_CURRENT_SOURCE_DIR}/src/es8311_birthday.c)
 target_sources(app PRIVATE ${app_sources})
 target_sources(app PRIVATE ${ZEPHYR_HAL_RPI_PICO_MODULE_DIR}/src/rp2_common/hardware_dma/dma.c)
+target_sources(app PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/core1/src/core1_audio.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/core1/src/audio_pio/audio_pio.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/core1/src/config/DEV_Config.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/core1/src/es8311/es8311.c
+)
 target_link_libraries(app PRIVATE opus)

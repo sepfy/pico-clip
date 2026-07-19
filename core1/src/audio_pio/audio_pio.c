@@ -31,10 +31,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if !defined(PICO_CLIP_ZEPHYR_CORE1)
 #include "pico/stdlib.h"
+#endif
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
 #include "hardware/dma.h"
+#include "hardware/structs/nvic.h"
+#include "hardware/structs/scb.h"
 #include "audio_pio.h"
 #include "audio_data.h"
 #include "audio_pio.pio.h"
@@ -183,11 +187,49 @@ void Sine_440hz_Out()
 /**
  * @brief Audio loopback test - record and playback simultaneously using DMA
  */
-#define MIC_NUM_SAMPLES 120000
+#define MIC_NUM_SAMPLES 12000
+
+static int16_t mic_sample_buffers[MIC_NUM_SAMPLES];
+static int loopback_dma_rx_chan;
+static int loopback_dma_tx_chan;
+static dma_channel_config loopback_dma_rx_config;
+static dma_channel_config loopback_dma_tx_config;
+
+static void Loopback_Dma_Handler(void)
+{
+    uint32_t pending = dma_hw->ints0;
+    uint32_t rx_mask = 1u << loopback_dma_rx_chan;
+    uint32_t tx_mask = 1u << loopback_dma_tx_chan;
+
+    if (pending & rx_mask)
+    {
+        dma_hw->ints0 = rx_mask;
+        dma_channel_configure(
+            loopback_dma_tx_chan,
+            &loopback_dma_tx_config,
+            &pico_audio.pio_2->txf[pico_audio.sm_dout],
+            mic_sample_buffers,
+            MIC_NUM_SAMPLES,
+            true
+        );
+    }
+
+    if (pending & tx_mask)
+    {
+        dma_hw->ints0 = tx_mask;
+        dma_channel_configure(
+            loopback_dma_rx_chan,
+            &loopback_dma_rx_config,
+            mic_sample_buffers,
+            &pico_audio.pio_1->rxf[pico_audio.sm_din],
+            MIC_NUM_SAMPLES,
+            true
+        );
+    }
+}
+
 void Loopback_Test()
 {
-    static int16_t mic_sample_buffers[MIC_NUM_SAMPLES];
-
     // MCLK
     Mclk_Pio_Init();
     // READ
@@ -199,52 +241,47 @@ void Loopback_Test()
     pio_sm_set_enabled(pico_audio.pio_2, pico_audio.sm_dout, true);
 
     // ===== DMA RX（PIO -> RAM）=====
-    int dma_rx_chan = dma_claim_unused_channel(true);
-    dma_channel_config c_rx = dma_channel_get_default_config(dma_rx_chan);
-    channel_config_set_transfer_data_size(&c_rx, DMA_SIZE_16);
-    channel_config_set_read_increment(&c_rx, false);
-    channel_config_set_write_increment(&c_rx, true);
+    loopback_dma_rx_chan = dma_claim_unused_channel(true);
+    loopback_dma_rx_config = dma_channel_get_default_config(loopback_dma_rx_chan);
+    channel_config_set_transfer_data_size(&loopback_dma_rx_config, DMA_SIZE_16);
+    channel_config_set_read_increment(&loopback_dma_rx_config, false);
+    channel_config_set_write_increment(&loopback_dma_rx_config, true);
     channel_config_set_dreq(
-        &c_rx,
+        &loopback_dma_rx_config,
         pio_get_dreq(pico_audio.pio_1, pico_audio.sm_din, false)
     );
 
     // ===== DMA TX（RAM -> PIO）=====
-    int dma_tx_chan = dma_claim_unused_channel(true);
-    dma_channel_config c_tx = dma_channel_get_default_config(dma_tx_chan);
-    channel_config_set_transfer_data_size(&c_tx, DMA_SIZE_16);
-    channel_config_set_read_increment(&c_tx, true);
-    channel_config_set_write_increment(&c_tx, false);
+    loopback_dma_tx_chan = dma_claim_unused_channel(true);
+    loopback_dma_tx_config = dma_channel_get_default_config(loopback_dma_tx_chan);
+    channel_config_set_transfer_data_size(&loopback_dma_tx_config, DMA_SIZE_16);
+    channel_config_set_read_increment(&loopback_dma_tx_config, true);
+    channel_config_set_write_increment(&loopback_dma_tx_config, false);
     channel_config_set_dreq(
-        &c_tx,
+        &loopback_dma_tx_config,
         pio_get_dreq(pico_audio.pio_2, pico_audio.sm_dout, true)
     );
 
-    while (true)
-    {
-        // ---------- READ ----------
-        dma_channel_configure(
-            dma_rx_chan,
-            &c_rx,
-            mic_sample_buffers, // Destination address: RAM
-            &pico_audio.pio_1->rxf[pico_audio.sm_din], // Source address: PIO RX FIFO
-            MIC_NUM_SAMPLES,    // Number of samples to transfer
-            true                // Start immediately
-        );
+    dma_channel_set_irq0_enabled(loopback_dma_rx_chan, true);
+    dma_channel_set_irq0_enabled(loopback_dma_tx_chan, true);
+    dma_hw->ints0 = (1u << loopback_dma_rx_chan) | (1u << loopback_dma_tx_chan);
+    ((uintptr_t *)scb_hw->vtor)[16U + DMA_IRQ_0] =
+        (uintptr_t)Loopback_Dma_Handler;
+    __asm volatile ("dmb" ::: "memory");
+    nvic_hw->iser[DMA_IRQ_0 / 32U] = 1u << (DMA_IRQ_0 % 32U);
 
-        dma_channel_wait_for_finish_blocking(dma_rx_chan);
+    // Start with capture. The IRQ handler alternates RX -> TX -> RX.
+    dma_channel_configure(
+        loopback_dma_rx_chan,
+        &loopback_dma_rx_config,
+        mic_sample_buffers,
+        &pico_audio.pio_1->rxf[pico_audio.sm_din],
+        MIC_NUM_SAMPLES,
+        true
+    );
 
-        // ---------- WRITE ----------
-        dma_channel_configure(
-            dma_tx_chan,
-            &c_tx,
-            &pico_audio.pio_2->txf[pico_audio.sm_dout], // Destination address: PIO TX FIFO
-            mic_sample_buffers, // Source address: RAM
-            MIC_NUM_SAMPLES,    // Number of samples to transfer
-            true                // Start immediately
-        );
-
-        dma_channel_wait_for_finish_blocking(dma_tx_chan);
+    while (true) {
+        __asm volatile ("wfi");
     }
 }
 

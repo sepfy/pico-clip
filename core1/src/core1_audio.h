@@ -1,6 +1,8 @@
 #ifndef PICO_CLIP_CORE1_AUDIO_H
 #define PICO_CLIP_CORE1_AUDIO_H
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -11,9 +13,12 @@ extern "C" {
  * in core1/src.
  */
 int core1_audio_init(void);
+extern volatile uint32_t core1_audio_debug_stage;
 
-/* Runs the Waveshare record-then-play loopback indefinitely. */
-void core1_audio_run_loopback(void);
+/* Initializes the codec and runs the DMA-IRQ loopback indefinitely. */
+int core1_audio_run_loopback(void);
+void core1_audio_run_opus_loopback(void);
+
 
 #ifdef __cplusplus
 }
