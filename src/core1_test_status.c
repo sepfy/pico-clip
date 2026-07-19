@@ -119,7 +119,7 @@ static void __attribute__((noreturn, noinline)) core1_audio_worker(void)
 	shared->version = PICO_CLIP_CORE1_TEST_VERSION;
 	shared->cpu1_boot_count++;
 	shared->audio_state = PICO_CLIP_CORE1_AUDIO_INIT;
-	ret = core1_audio_run_loopback();
+	ret = core1_audio_run_opus_stream();
 	shared->audio_error = ret;
 	shared->audio_state = PICO_CLIP_CORE1_AUDIO_ERROR;
 
@@ -175,6 +175,11 @@ static int cmd_core1_audio_status(const struct shell *shell, size_t argc, char *
 		    shared->magic, shared->version, shared->cpu1_boot_count,
 		    audio_state_name(shared->audio_state), shared->audio_error,
 		    core1_audio_debug_stage);
+	shell_print(shell,
+		    "opus: seq=%u len=%u encoded=%u dropped=%u bitrate=%u heartbeat=%u",
+		    shared->opus_seq, shared->opus_len, shared->opus_encode_count,
+		    shared->opus_dropped, shared->opus_bitrate,
+		    shared->audio_heartbeat);
 	return 0;
 }
 

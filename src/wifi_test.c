@@ -231,7 +231,7 @@ static int webrtc_test_start_cmd(const struct shell *sh, size_t argc, char **arg
 	url = argv[2];
 	if ((pico_clip_core1_test_shm()->audio_flags &
 	     PICO_CLIP_CORE1_AUDIO_FLAG_OPUS_READY) == 0U) {
-		shell_print(sh, "warning: core1 Opus is not ready; run core1_audio_test opus");
+		shell_print(sh, "warning: core1 Opus stream is not ready");
 	}
 	shell_print(sh, "starting WebRTC test: Opus audio + datachannel, url=%s", url);
 

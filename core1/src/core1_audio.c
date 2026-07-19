@@ -46,3 +46,13 @@ void core1_audio_run_opus_loopback(void)
 {
 	core1_opus_loopback();
 }
+
+int core1_audio_run_opus_stream(void)
+{
+	int ret = core1_audio_init();
+
+	if (ret != 0) {
+		return ret;
+	}
+	return core1_opus_stream();
+}

@@ -66,6 +66,7 @@ target_sources(app PRIVATE ${app_sources})
 target_sources(app PRIVATE ${ZEPHYR_HAL_RPI_PICO_MODULE_DIR}/src/rp2_common/hardware_dma/dma.c)
 target_sources(app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/core1/src/core1_audio.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/core1/src/core1_opus.c
   ${CMAKE_CURRENT_SOURCE_DIR}/core1/src/audio_pio/audio_pio.c
   ${CMAKE_CURRENT_SOURCE_DIR}/core1/src/config/DEV_Config.c
   ${CMAKE_CURRENT_SOURCE_DIR}/core1/src/es8311/es8311.c

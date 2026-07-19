@@ -18,6 +18,7 @@ extern volatile uint32_t core1_audio_debug_stage;
 /* Initializes the codec and runs the DMA-IRQ loopback indefinitely. */
 int core1_audio_run_loopback(void);
 void core1_audio_run_opus_loopback(void);
+int core1_audio_run_opus_stream(void);
 
 
 #ifdef __cplusplus
