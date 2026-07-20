@@ -10,28 +10,6 @@ project(pico_clip)
 
 option(WIFI_SHELL_AMP_CPU0 "Build wifi_shell as the AMP CPU0 app" OFF)
 
-set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
-set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
-set(OPUS_FIXED_POINT ON CACHE BOOL "" FORCE)
-set(OPUS_ENABLE_FLOAT_API OFF CACHE BOOL "" FORCE)
-set(OPUS_DISABLE_INTRINSICS ON CACHE BOOL "" FORCE)
-set(OPUS_STACK_PROTECTOR OFF CACHE BOOL "" FORCE)
-set(OPUS_FORTIFY_SOURCE OFF CACHE BOOL "" FORCE)
-set(OPUS_HARDENING OFF CACHE BOOL "" FORCE)
-set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
-set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
-set(OPUS_DRED OFF CACHE BOOL "" FORCE)
-set(OPUS_OSCE OFF CACHE BOOL "" FORCE)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../modules/lib/opus ${CMAKE_CURRENT_BINARY_DIR}/opus)
-target_compile_options(opus PRIVATE
-  -mcpu=cortex-m33
-  -mthumb
-  -mabi=aapcs
-  -mfp16-format=ieee
-  -mtp=soft
-)
-
 zephyr_compile_options(-Wno-error=unused-parameter -Wno-error=unused-variable)
 zephyr_compile_definitions(
   AIROC_WIFI_RX_PACKET_POOL_COUNT=32
@@ -48,10 +26,8 @@ zephyr_compile_definitions(
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 zephyr_include_directories(${ZEPHYR_HAL_RPI_PICO_MODULE_DIR}/src/rp2_common/hardware_dma/include)
-zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/audio_pio)
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/core1/src)
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/core1/src/audio_pio)
-zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/core1/src/audio_data)
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/core1/src/config)
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/core1/src/es8311)
 zephyr_include_directories(${ZEPHYR_HAL_RPI_PICO_MODULE_DIR}/src/common/pico_stdlib_headers/include)
@@ -61,14 +37,12 @@ zephyr_include_directories(${ZEPHYR_HAL_RPI_PICO_MODULE_DIR}/src/rp2_common/hard
 zephyr_compile_definitions(PICO_CLIP_ZEPHYR_CORE1=1)
 
 FILE(GLOB app_sources src/*.c)
-list(REMOVE_ITEM app_sources ${CMAKE_CURRENT_SOURCE_DIR}/src/es8311_birthday.c)
 target_sources(app PRIVATE ${app_sources})
 target_sources(app PRIVATE ${ZEPHYR_HAL_RPI_PICO_MODULE_DIR}/src/rp2_common/hardware_dma/dma.c)
 target_sources(app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/core1/src/core1_audio.c
-  ${CMAKE_CURRENT_SOURCE_DIR}/core1/src/core1_opus.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/core1/src/core1_pcmu.c
   ${CMAKE_CURRENT_SOURCE_DIR}/core1/src/audio_pio/audio_pio.c
   ${CMAKE_CURRENT_SOURCE_DIR}/core1/src/config/DEV_Config.c
   ${CMAKE_CURRENT_SOURCE_DIR}/core1/src/es8311/es8311.c
 )
-target_link_libraries(app PRIVATE opus)

@@ -439,98 +439,10 @@ int Es8311_Voice_Volume_Set(int volume)
 }
 
 /**
- * @brief Get current DAC output volume
- * Reads current volume setting from DAC register.
- * @return int Current volume level (0 ~ 100)
- */
-int Es8311_Voice_Volume_Get()
-{
-    uint8_t reg32,volume;
-    reg32 = Es8311_Read_Reg(ES8311_DAC_REG32);
-
-    if (reg32 == 0) {
-        volume = 0;
-    } else {
-        volume = ((reg32 * 100) / 256) + 1;
-    }
-    return volume;
-}
-
-/**
- * @brief Mute or unmute DAC output
- * @param mute true to mute, false to unmute
- */
-void Es8311_Voice_Mute(bool mute)
-{
-    uint8_t reg31;
-    reg31 = Es8311_Read_Reg(ES8311_DAC_REG31);
-
-    if (mute) {
-        reg31 |= BIT(6) | BIT(5);
-    } else {
-        reg31 &= ~(BIT(6) | BIT(5));
-    }
-
-    return Es8311_Write_Reg(ES8311_DAC_REG31, reg31);
-}
-
-/**
  * @brief Set ADC microphone input gain
  * @param gain_db Microphone gain level to set
  */
 void Es8311_Microphone_Gain_Set(es8311_mic_gain_t gain_db)
 {
     return Es8311_Write_Reg(ES8311_ADC_REG16, gain_db); // ADC gain scale up
-}
-
-/**
- * @brief Configure DAC output fade in/out ramp rate
- * @param fade Fade ramp rate configuration
- */
-void Es8311_Voice_Fade(const es8311_fade_t fade)
-{
-    uint8_t reg37;
-    reg37 = Es8311_Read_Reg(ES8311_DAC_REG37);
-    reg37 &= 0x0F;
-    reg37 |= (fade << 4);
-    return Es8311_Write_Reg(ES8311_DAC_REG37, reg37);
-}
-
-/**
- * @brief Configure ADC microphone input fade in/out ramp rate
- * @param fade Fade ramp rate configuration
- */
-void Es8311_Microphone_Fade(const es8311_fade_t fade)
-{
-    uint8_t reg15;
-    reg15 = Es8311_Read_Reg(ES8311_ADC_REG15);
-    reg15 &= 0x0F;
-    reg15 |= (fade << 4);
-    return Es8311_Write_Reg(ES8311_ADC_REG15, reg15);
-}
-
-/**
- * @brief Print ES8311 register contents for debugging
- * Reads and prints all ES8311 register values from 0x00 to 0x4A.
- */
-void Es8311_Register_Dump()
-{
-    for (int reg = 0; reg < 0x4A; reg++) {
-        uint8_t value;
-        value = Es8311_Read_Reg(reg);
-        printf("REG:%02x: %02x", reg, value);
-    }
-}
-
-/**
- * @brief Read ES8311 chip ID
- * Reads 16-bit chip ID from registers 0xFD and 0xFE.
- * @return uint16_t 16-bit chip ID value
- */
-uint16_t Es8311_Read_Id()
-{
-    uint8_t chip_id_LSB = Es8311_Read_Reg(0xFD);
-    uint8_t chip_id_MSB = Es8311_Read_Reg(0xFE); 
-    uint16_t chip_id = (chip_id_MSB << 8) + chip_id_LSB;
-    return chip_id;
 }

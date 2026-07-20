@@ -1,5 +1,5 @@
 #include "core1_audio.h"
-#include "core1_opus.h"
+#include "core1_pcmu.h"
 
 #include "DEV_Config.h"
 #include "audio_pio.h"
@@ -42,17 +42,10 @@ int core1_audio_run_loopback(void)
 	return 0;
 }
 
-void core1_audio_run_opus_loopback(void)
-{
-	core1_opus_loopback();
-}
-
-int core1_audio_run_opus_stream(void)
+int core1_audio_run_pcmu_stream(void)
 {
 	int ret = core1_audio_init();
 
-	if (ret != 0) {
-		return ret;
-	}
-	return core1_opus_stream();
+	if (ret != 0) return ret;
+	return core1_pcmu_stream();
 }

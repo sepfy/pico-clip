@@ -87,25 +87,6 @@ typedef enum {
     ES8311_MIC_GAIN_MAX
 } es8311_mic_gain_t;
 
-typedef enum {
-    ES8311_FADE_OFF = 0,
-    ES8311_FADE_4LRCK, // 4LRCK means ramp 0.25dB/4LRCK
-    ES8311_FADE_8LRCK,
-    ES8311_FADE_16LRCK,
-    ES8311_FADE_32LRCK,
-    ES8311_FADE_64LRCK,
-    ES8311_FADE_128LRCK,
-    ES8311_FADE_256LRCK,
-    ES8311_FADE_512LRCK,
-    ES8311_FADE_1024LRCK,
-    ES8311_FADE_2048LRCK,
-    ES8311_FADE_4096LRCK,
-    ES8311_FADE_8192LRCK,
-    ES8311_FADE_16384LRCK,
-    ES8311_FADE_32768LRCK,
-    ES8311_FADE_65536LRCK
-} es8311_fade_t;
-
 typedef enum es8311_resolution_t {
     ES8311_RESOLUTION_16 = 16,
     ES8311_RESOLUTION_18 = 18,
@@ -136,31 +117,6 @@ void Es8311_Init(pico_audio_t pico_audio);
 int Es8311_Voice_Volume_Set(int volume);
 
 /**
- * @brief Get current output volume
- *
- * Reads the current DAC output volume setting.
- *
- * @return int Current volume level (0 ~ 100)
- */
-int Es8311_Voice_Volume_Get();
-
-/**
- * @brief Print ES8311 register contents for debugging
- *
- * Reads and prints all ES8311 register values from 0x00 to 0x4A.
- */
-void Es8311_Register_Dump();
-
-/**
- * @brief Mute or unmute ES8311 DAC output
- *
- * Controls the mute state of the DAC output.
- *
- * @param mute true to mute output, false to unmute
- */
-void Es8311_Voice_Mute(bool mute);
-
-/**
  * @brief Set microphone gain
  *
  * Sets the ADC input gain for microphone.
@@ -189,29 +145,5 @@ void Es8311_Microphone_Config();
  * @return int 0 on success, -1 if the specified frequency combination is not supported
  */
 int Es8311_Sample_Frequency_Config(int mclk_frequency, int sample_frequency);
-
-/**
- * @brief Configure fade in/out for DAC output
- *
- * Sets the ramp rate for audio fade in/out on the DAC output.
- *
- * @param fade Fade ramp rate configuration
- */
-void Es8311_Voice_Fade(const es8311_fade_t fade);
-
-/**
- * @brief Configure fade in/out for ADC input
- *
- * Sets the ramp rate for audio fade in/out on the ADC input (microphone).
- *
- * @param fade Fade ramp rate configuration
- */
-void Es8311_Microphone_Fade(const es8311_fade_t fade);
-
-/**
- * @brief Read ES8311 chip ID
- * @return uint16_t 16-bit chip ID value
- */
-uint16_t Es8311_Read_Id();
 
 #endif // !_ES8311_H_

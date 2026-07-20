@@ -29,10 +29,11 @@
 ******************************************************************************/
 
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #if !defined(PICO_CLIP_ZEPHYR_CORE1)
 #include "pico/stdlib.h"
+#endif
+#if defined(CORE1_TEST_BIRTHDAY)
+#include "audio_data.h"
 #endif
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
@@ -40,9 +41,7 @@
 #include "hardware/structs/nvic.h"
 #include "hardware/structs/scb.h"
 #include "audio_pio.h"
-#include "audio_data.h"
 #include "audio_pio.pio.h"
-#include "music.h"
 #include "DEV_Config.h"
 
 /**
@@ -54,40 +53,6 @@ void Set_Mclk_Frequency(uint32_t mclk_freq)
 	double system_clock_frequency = clock_get_hz(clk_sys);
     double div = (system_clock_frequency / mclk_freq) / 5; 
     pio_sm_set_clkdiv(pico_audio.pio_1, pico_audio.sm_mclk, div);
-}
-
-/**
- * @brief Process 16-bit audio data into 32-bit format for PIO output
- * @param audio Pointer to 16-bit audio data array
- * @param len Number of samples in the audio array
- * @return int32_t* Pointer to newly allocated 32-bit audio data array
- */
-int32_t* Data_Treating(const int16_t *audio , uint32_t len)
-{
-	int32_t *samples = (int32_t *)calloc(len, sizeof(int32_t));
-	for(uint32_t i = 0; i < len; i++)
-	{
-		if(pico_audio.channel_count == 1)
-		{
-			samples[i] = audio[i] * 65536;
-		}
-		else
-		{
-			samples[i] = audio[i] * 65536 + audio[i];
-		}
-	}
-	return samples;
-}
-
-/**
- * @brief Output audio samples via PIO state machine
- * @param samples Pointer to 32-bit audio sample array
- * @param len Number of samples to output
- */
-void Audio_Out(int32_t *samples, int32_t len) 
-{
-	for(uint16_t i = 0; i < len; i++)
-	   	pio_sm_put_blocking(pico_audio.pio_2, pico_audio.sm_dout, samples[i]);
 }
 
 /**
@@ -126,6 +91,7 @@ void Mclk_Pio_Init()
     pio_sm_set_enabled(pico_audio.pio_1, pico_audio.sm_mclk , true);
 }
 
+#if defined(CORE1_TEST_BIRTHDAY)
 /**
  * @brief Play Happy Birthday audio sequence using DMA
  */
@@ -154,35 +120,7 @@ void Happy_Birthday_Out()
         dma_channel_wait_for_finish_blocking(dma_channel);
     }
 }
-
-/**
- * @brief Output a 440Hz sine wave test signal
- */
-void Sine_440hz_Out()
-{
-    // MCLK
-    Mclk_Pio_Init();
-    // WRITE
-    Dout_Pio_Init(); 
-	int len = 24000;
-
-    channel_config_set_dreq(&dma_config, pio_get_dreq(pico_audio.pio_2, pico_audio.sm_dout, true));
-
-    while (true) 
-    {	
-        // Configure DMA transfers
-        dma_channel_configure(
-            dma_channel,
-            &dma_config,
-            &pico_audio.pio_2->txf[pico_audio.sm_dout], // Destination address: PIO TX FIFO
-            Sine_440hz,                       // Source address: audio data array
-            len,                              // Number of samples to transfer
-            true                              // Start immediately
-        );
-
-        dma_channel_wait_for_finish_blocking(dma_channel);
-    }
-}
+#endif
 
 /**
  * @brief Audio loopback test - record and playback simultaneously using DMA
@@ -283,50 +221,4 @@ void Loopback_Test()
     while (true) {
         __asm volatile ("wfi");
     }
-}
-
-/**
- * @brief Play music audio sequence using DMA
- */
-void Music_Out()
-{
-    // MCLK
-    Mclk_Pio_Init();
-    // WRITE
-    Dout_Pio_Init(); 
-
-    channel_config_set_dreq(&dma_config, pio_get_dreq(pico_audio.pio_2, pico_audio.sm_dout, true));
-
-    while (true) 
-    {	
-        // Configure DMA transfers
-        dma_channel_configure(
-            dma_channel,
-            &dma_config,
-            &pico_audio.pio_2->txf[pico_audio.sm_dout], // Destination address: PIO TX FIFO
-            audio_data,                       // Source address: audio data array
-            AUDIO_SAMPLES,                    // Number of samples to transfer
-            true                              // Start immediately
-        );
-
-        dma_channel_wait_for_finish_blocking(dma_channel);
-    }
-}
-
-/**
- * @brief Stop audio PIO state machines
- */
-void __no_inline_not_in_flash_func(Stop)()
-{
-    pio_sm_set_enabled(pico_audio.pio_1, pico_audio.sm_mclk , false);
-    pio_sm_set_enabled(pico_audio.pio_2, pico_audio.sm_dout , false);
-}
-
-/**
- * @brief Start audio PIO state machines
- */
-void __no_inline_not_in_flash_func(Start)()
-{
-    pio_sm_set_enabled(pico_audio.pio_1, pico_audio.sm_mclk , true);
-    pio_sm_set_enabled(pico_audio.pio_2, pico_audio.sm_dout , true);
 }

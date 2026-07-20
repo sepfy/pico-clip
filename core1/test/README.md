@@ -1,39 +1,19 @@
-# Core1 audio standalone test
+# Core1 audio standalone tests
 
-Standalone RP2350/Pico SDK firmware that builds the audio implementation from
-`../src` and runs the Waveshare audio tests or the 20 ms Opus loopback.
-
-Build modes:
-
-```sh
-./scripts/build.sh
-CORE1_TEST_MODE=opus ./scripts/build.sh
-CORE1_TEST_MODE=birthday ./scripts/build.sh
-```
-
-The Opus mode captures 480 mono samples at 24 kHz with ping-pong RX DMA and
-encodes each frame outside the DMA IRQ. It buffers 25 encoded 20 ms packets to
-produce a 500 ms loopback delay, then decodes into ping-pong TX DMA buffers. It
-uses fixed-point Opus at 24 kbit/s and complexity 0.
-This directory contains only the test entry point and build support needed to
-produce a firmware image before the audio code is integrated into AMP Core1.
-
-Build:
+This directory builds standalone RP2350 Pico SDK firmware using the audio
+implementations from `../src`.
 
 ```sh
 ./scripts/build.sh
 CORE1_TEST_MODE=birthday ./scripts/build.sh
+CORE1_TEST_MODE=benchmark ./scripts/build.sh
 ```
 
-The single `src/main.c` selects its behavior with the `CORE1_TEST_BIRTHDAY`
-compile-time macro. The build script sets it through
-`CORE1_TEST_MODE=loopback|birthday`.
+Modes:
 
-Firmware outputs:
+- `loopback`: Waveshare raw record-then-play DMA loopback.
+- `birthday`: repeating Waveshare Happy Birthday playback.
+- `benchmark`: isolated fixed-point Opus timing benchmark on UART0 GP16/GP17.
 
-- `build_loopback/core1_test.uf2`: original record-then-play loopback
-- `build_birthday/core1_test.uf2`: original repeating Happy Birthday playback
-
-Diagnostic `printf` output is disabled because the workspace's Pico SDK
-checkout does not include TinyUSB and GPIO0/1 used by the default UART are
-occupied by the audio interface.
+The loopback and birthday builds keep diagnostic `printf` disabled because the
+default UART GPIO0/1 overlap the audio interface.

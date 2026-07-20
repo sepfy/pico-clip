@@ -231,9 +231,9 @@ static int webrtc_test_start_cmd(const struct shell *sh, size_t argc, char **arg
 	url = argv[2];
 	if ((pico_clip_core1_test_shm()->audio_flags &
 	     PICO_CLIP_CORE1_AUDIO_FLAG_OPUS_READY) == 0U) {
-		shell_print(sh, "warning: core1 Opus stream is not ready");
+		shell_print(sh, "warning: core1 audio stream is not ready");
 	}
-	shell_print(sh, "starting WebRTC test: Opus audio + datachannel, url=%s", url);
+	shell_print(sh, "starting WebRTC test: PCMU audio + datachannel, url=%s", url);
 
 	ret = peer_test_start(url, token);
 	if (ret < 0) {
@@ -278,11 +278,11 @@ static int cmd_webrtc_test(const struct shell *sh, size_t argc, char **argv)
 			    g_pc != NULL ? peer_connection_state_to_string(g_state) : "none",
 			    g_datachannel_created);
 		shell_print(sh,
-			    "opus tx: sent=%u dropped=%u fail=%u last_seq=%u core1_seq=%u len=%u flags=0x%x",
+			    "pcmu tx: sent=%u dropped=%u fail=%u last_seq=%u core1_seq=%u len=%u flags=0x%x",
 			    g_audio_sent, g_audio_dropped, g_audio_send_failed,
 			    g_last_audio_seq, shared->opus_seq, shared->opus_len,
 			    shared->audio_flags);
-		shell_print(sh, "opus rx: queued=%u dropped=%u pending=%u",
+		shell_print(sh, "pcmu rx: queued=%u dropped=%u pending=%u",
 			    g_remote_audio_seq, g_remote_audio_dropped,
 			    shared->spk_opus_write_seq - shared->spk_opus_read_seq);
 		shell_print(sh, "datachannel: sent=%u fail=%u", g_datachannel_sent,
@@ -328,7 +328,7 @@ static int cmd_peer_test(const struct shell *sh, size_t argc, char **argv)
 	return cmd_webrtc_test(sh, argc, argv);
 }
 
-SHELL_CMD_REGISTER(webrtc_test, NULL, "Run WebRTC Opus audio + datachannel test",
+SHELL_CMD_REGISTER(webrtc_test, NULL, "Run WebRTC PCMU audio + datachannel test",
 		   cmd_webrtc_test);
 SHELL_CMD_REGISTER(peer_test, NULL, "Alias for webrtc_test", cmd_peer_test);
 
@@ -432,11 +432,16 @@ static void onaudiotrack(uint8_t *data, size_t size, void *user_data)
 	shared->spk_opus_slot_seq[slot] = 0;
 	memcpy((void *)shared->spk_opus_packet[slot], data, size);
 	shared->spk_opus_len[slot] = (uint32_t)size;
+	__DMB();
 	shared->spk_opus_slot_seq[slot] = write_seq + 1U;
 	shared->spk_opus_write_seq = write_seq + 1U;
+	if (write_seq + 1U - read_seq > shared->spk_opus_pending_max) {
+		shared->spk_opus_pending_max = write_seq + 1U - read_seq;
+	}
+	__SEV();
 
 	if ((g_remote_audio_seq % 50U) == 0U) {
-		printk("remote opus queued=%u dropped=%u pending=%u\n",
+		printk("remote pcmu queued=%u dropped=%u pending=%u\n",
 		       g_remote_audio_seq, g_remote_audio_dropped,
 		       shared->spk_opus_write_seq - shared->spk_opus_read_seq);
 	}
@@ -501,7 +506,7 @@ static void peer_send_core1_audio(void)
 	g_last_audio_seq = seq;
 	g_audio_sent++;
 	if ((g_audio_sent % 50U) == 0U) {
-		printk("opus audio sent=%u dropped=%u fail=%u seq=%u len=%u\n",
+		printk("pcmu audio sent=%u dropped=%u fail=%u seq=%u len=%u\n",
 		       g_audio_sent, g_audio_dropped, g_audio_send_failed, seq, len);
 	}
 }
@@ -562,7 +567,7 @@ static int peer_test_start(const char *url, const char *token)
 		},
 		.datachannel = DATA_CHANNEL_NONE,
 		.video_codec = CODEC_NONE,
-		.audio_codec = CODEC_OPUS,
+		.audio_codec = CODEC_PCMU,
 		.onaudiotrack = onaudiotrack,
 	};
 

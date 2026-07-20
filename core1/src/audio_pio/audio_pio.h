@@ -30,7 +30,7 @@
 #ifndef _PICO_AUDIO_PIO_H
 #define _PICO_AUDIO_PIO_H
 
-#if !defined(PICO_CLIP_ZEPHYR_CORE1)
+#if defined(CORE1_TEST_BIRTHDAY)
 #include "pico/stdlib.h"
 #else
 #include <stdbool.h>
@@ -42,8 +42,12 @@
 #define AUDIO_PIO __CONCAT(pio, PICO_AUDIO_PIO)
 #define GPIO_FUNC_PIOx __CONCAT(GPIO_FUNC_PIO, PICO_AUDIO_PIO)
 
-#define PICO_MCLK_FREQ      24000 * 256
-#define PICO_SAMPLE_FREQ    24000
+#ifndef PICO_MCLK_FREQ
+#define PICO_MCLK_FREQ      (8000 * 256)
+#endif
+#ifndef PICO_SAMPLE_FREQ
+#define PICO_SAMPLE_FREQ    8000
+#endif
 #define PICO_AUDIO_VOLUME   60
 #define PICO_AUDIO_COUNT    1
 #define PICO_AUDIO_RES_IN   16
@@ -122,50 +126,16 @@ void Mclk_Pio_Init();
  */
 void Set_Mclk_Frequency(uint32_t frequency);
 
-/**
- * @brief Process 16-bit audio data into 32-bit format for PIO output
- * @param audio Pointer to 16-bit audio data array
- * @param len Number of samples in the audio array
- * @return int32_t* Pointer to newly allocated 32-bit audio data array
- */
-int32_t* Data_Treating(const int16_t *audio , uint32_t len);
-
-/**
- * @brief Output audio samples via PIO state machine
- * @param samples Pointer to 32-bit audio sample array
- * @param len Number of samples to output
- */
-void Audio_Out(int32_t *samples, int32_t len);
-
+#if !defined(PICO_CLIP_ZEPHYR_CORE1)
 /**
  * @brief Play Happy Birthday audio sequence using DMA
  */
 void Happy_Birthday_Out();
-
-/**
- * @brief Output a 440Hz sine wave test signal
- */
-void Sine_440hz_Out();
+#endif
 
 /**
  * @brief Audio loopback test - record and playback simultaneously using DMA
  */
 void Loopback_Test();
-
-
-/**
- * @brief Play music audio sequence using DMA
- */
-void Music_Out();
-
-/**
- * @brief Start audio PIO state machines
- */
-void Start();
-
-/**
- * @brief Stop audio PIO state machines
- */
-void Stop();
 
 #endif //_PICO_AUDIO_PIO_H

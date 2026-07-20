@@ -119,7 +119,7 @@ static void __attribute__((noreturn, noinline)) core1_audio_worker(void)
 	shared->version = PICO_CLIP_CORE1_TEST_VERSION;
 	shared->cpu1_boot_count++;
 	shared->audio_state = PICO_CLIP_CORE1_AUDIO_INIT;
-	ret = core1_audio_run_opus_stream();
+	ret = core1_audio_run_pcmu_stream();
 	shared->audio_error = ret;
 	shared->audio_state = PICO_CLIP_CORE1_AUDIO_ERROR;
 
@@ -176,10 +176,18 @@ static int cmd_core1_audio_status(const struct shell *shell, size_t argc, char *
 		    audio_state_name(shared->audio_state), shared->audio_error,
 		    core1_audio_debug_stage);
 	shell_print(shell,
-		    "opus: seq=%u len=%u encoded=%u dropped=%u bitrate=%u heartbeat=%u",
+		    "pcmu: seq=%u len=%u encoded=%u decoded=%u tx_drop=%u rx_drop=%u pending=%u bitrate=%u heartbeat=%u",
 		    shared->opus_seq, shared->opus_len, shared->opus_encode_count,
-		    shared->opus_dropped, shared->opus_bitrate,
+		    shared->opus_decode_count, shared->opus_dropped,
+		    shared->spk_opus_dropped,
+		    shared->spk_opus_write_seq - shared->spk_opus_read_seq,
+		    shared->opus_bitrate,
 		    shared->audio_heartbeat);
+	shell_print(shell,
+		    "pcmu timing us: enc=%u max=%u dec=%u max=%u dec_err=%u queue_max=%u",
+		    shared->opus_encode_last_us, shared->opus_encode_max_us,
+		    shared->opus_decode_last_us, shared->opus_decode_max_us,
+		    shared->opus_decode_errors, shared->spk_opus_pending_max);
 	return 0;
 }
 

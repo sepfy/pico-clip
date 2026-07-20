@@ -6,9 +6,8 @@ toolchain_dir="${PICO_TOOLCHAIN_PATH:-/home/user/zephyr-sdk-1.0.1/gnu/arm-zephyr
 test_mode="${CORE1_TEST_MODE:-loopback}"
 
 case "${test_mode}" in
-    loopback|birthday) ;;
-    opus) ;;
-    *) echo "CORE1_TEST_MODE must be loopback, opus, or birthday" >&2; exit 2 ;;
+    loopback|birthday|benchmark) ;;
+    *) echo "CORE1_TEST_MODE must be loopback, birthday, or benchmark" >&2; exit 2 ;;
 esac
 
 build_dir="${app_dir}/build_${test_mode}"
