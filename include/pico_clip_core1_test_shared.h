@@ -11,7 +11,7 @@
 
 #define PICO_CLIP_CORE1_TEST_SHM_BASE 0x20080000u
 #define PICO_CLIP_CORE1_TEST_MAGIC 0x54314350u /* PC1T */
-#define PICO_CLIP_CORE1_TEST_VERSION 3u
+#define PICO_CLIP_CORE1_TEST_VERSION 5u
 
 #define PICO_CLIP_CORE1_AUDIO_CMD_NONE 0u
 #define PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY 1u
@@ -63,6 +63,7 @@ struct pico_clip_core1_test_shared {
 	uint32_t audio_flags;
 	uint32_t opus_seq;
 	uint32_t opus_len;
+	uint32_t opus_silence;
 	uint32_t opus_bitrate;
 	uint32_t opus_encode_count;
 	uint32_t opus_decode_count;
@@ -73,6 +74,10 @@ struct pico_clip_core1_test_shared {
 	uint32_t opus_decode_max_us;
 	uint32_t opus_decode_errors;
 	uint32_t spk_opus_pending_max;
+	uint32_t mic_enabled;
+	uint32_t flash_pause_request;
+	uint32_t flash_pause_ack;
+	uint32_t bootsel_samples;
 	uint32_t spk_opus_write_seq;
 	uint32_t spk_opus_read_seq;
 	uint32_t spk_opus_dropped;

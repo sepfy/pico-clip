@@ -28,14 +28,11 @@ static PeerConnection *g_pc;
 static PeerConnectionState g_state = PEER_CONNECTION_NEW;
 static uint32_t g_last_audio_seq;
 static uint32_t g_audio_sent;
+static uint32_t g_audio_silence_sent;
 static uint32_t g_audio_send_failed;
 static uint32_t g_audio_dropped;
 static uint32_t g_remote_audio_seq;
 static uint32_t g_remote_audio_dropped;
-static uint32_t g_datachannel_sent;
-static uint32_t g_datachannel_send_failed;
-static bool g_datachannel_created;
-static int64_t g_datachannel_next_create_ms;
 static char g_url[192];
 static char g_token[128];
 static const char g_wifi_ssid[] = "yu_2.4G";
@@ -57,7 +54,7 @@ static void peer_unlock(void);
 static void webrtc_test_usage(const struct shell *sh)
 {
 	shell_print(sh,
-		    "Usage: webrtc_test start -u <url> [-t <token>] | stop | status | send <text>");
+		    "Usage: webrtc_test start -u <url> [-t <token>] | stop | status");
 }
 
 static void wifi_schedule_reconnect(void)
@@ -233,7 +230,7 @@ static int webrtc_test_start_cmd(const struct shell *sh, size_t argc, char **arg
 	     PICO_CLIP_CORE1_AUDIO_FLAG_OPUS_READY) == 0U) {
 		shell_print(sh, "warning: core1 audio stream is not ready");
 	}
-	shell_print(sh, "starting WebRTC test: PCMU audio + datachannel, url=%s", url);
+	shell_print(sh, "starting WebRTC PCMU audio test, url=%s", url);
 
 	ret = peer_test_start(url, token);
 	if (ret < 0) {
@@ -273,45 +270,17 @@ static int cmd_webrtc_test(const struct shell *sh, size_t argc, char **argv)
 		volatile struct pico_clip_core1_test_shared *shared =
 			pico_clip_core1_test_shm();
 
-		shell_print(sh, "webrtc: running=%u state=%s dc_created=%u",
+		shell_print(sh, "webrtc: running=%u state=%s",
 			    peer_running,
-			    g_pc != NULL ? peer_connection_state_to_string(g_state) : "none",
-			    g_datachannel_created);
+			    g_pc != NULL ? peer_connection_state_to_string(g_state) : "none");
 		shell_print(sh,
-			    "pcmu tx: sent=%u dropped=%u fail=%u last_seq=%u core1_seq=%u len=%u flags=0x%x",
-			    g_audio_sent, g_audio_dropped, g_audio_send_failed,
+			    "pcmu tx: sent=%u silence=%u dropped=%u fail=%u last_seq=%u core1_seq=%u len=%u flags=0x%x",
+			    g_audio_sent, g_audio_silence_sent, g_audio_dropped, g_audio_send_failed,
 			    g_last_audio_seq, shared->opus_seq, shared->opus_len,
 			    shared->audio_flags);
 		shell_print(sh, "pcmu rx: queued=%u dropped=%u pending=%u",
 			    g_remote_audio_seq, g_remote_audio_dropped,
 			    shared->spk_opus_write_seq - shared->spk_opus_read_seq);
-		shell_print(sh, "datachannel: sent=%u fail=%u", g_datachannel_sent,
-			    g_datachannel_send_failed);
-		return 0;
-	}
-
-	if (strcmp(argv[1], "send") == 0) {
-		int ret;
-
-		if (argc < 3) {
-			webrtc_test_usage(sh);
-			return -EINVAL;
-		}
-		if (g_pc == NULL || g_state != PEER_CONNECTION_CONNECTED) {
-			shell_error(sh, "WebRTC is not connected");
-			return -ENOTCONN;
-		}
-
-		peer_lock();
-		ret = peer_connection_datachannel_send(g_pc, argv[2], strlen(argv[2]));
-		peer_unlock();
-		if (ret < 0) {
-			g_datachannel_send_failed++;
-			shell_error(sh, "datachannel send failed: %d", ret);
-			return ret;
-		}
-		g_datachannel_sent++;
-		shell_print(sh, "datachannel sent: %s", argv[2]);
 		return 0;
 	}
 
@@ -328,7 +297,7 @@ static int cmd_peer_test(const struct shell *sh, size_t argc, char **argv)
 	return cmd_webrtc_test(sh, argc, argv);
 }
 
-SHELL_CMD_REGISTER(webrtc_test, NULL, "Run WebRTC PCMU audio + datachannel test",
+SHELL_CMD_REGISTER(webrtc_test, NULL, "Run WebRTC PCMU audio test",
 		   cmd_webrtc_test);
 SHELL_CMD_REGISTER(peer_test, NULL, "Alias for webrtc_test", cmd_peer_test);
 
@@ -374,33 +343,6 @@ static void onconnectionstatechange(PeerConnectionState state, void *data)
 		printk("core1 20 ms double-buffered microphone Opus stream requested seq=%u\n",
 		       seq);
 	}
-}
-
-static void onopen(void *user_data)
-{
-	ARG_UNUSED(user_data);
-	printk("datachannel open\n");
-}
-
-static void onclose(void *user_data)
-{
-	ARG_UNUSED(user_data);
-	printk("datachannel close\n");
-}
-
-static void onmessage(char *msg, size_t len, void *user_data, uint16_t sid)
-{
-	ARG_UNUSED(user_data);
-	if (len >= 4 && msg[0] == 'p' && msg[1] == 'i' && msg[2] == 'n' && msg[3] == 'g') {
-		int ret = peer_connection_datachannel_send(g_pc, "pong", 4);
-		if (ret < 0) {
-			printk("datachannel[%u] pong failed: %d\n", sid, ret);
-		} else {
-			printk("datachannel[%u] ping -> pong\n", sid);
-		}
-		return;
-	}
-	printk("datachannel[%u] rx: %.*s\n", sid, (int)len, msg);
 }
 
 static void onaudiotrack(uint8_t *data, size_t size, void *user_data)
@@ -464,6 +406,7 @@ static void peer_send_core1_audio(void)
 	uint32_t seq;
 	uint32_t seq_after;
 	uint32_t len;
+	bool silence;
 	int ret;
 
 	if (g_pc == NULL || g_state != PEER_CONNECTION_CONNECTED) {
@@ -489,6 +432,7 @@ static void peer_send_core1_audio(void)
 	}
 
 	memcpy(packet, (const void *)shared->opus_packet, len);
+	silence = shared->opus_silence != 0u;
 	seq_after = shared->opus_seq;
 	if (seq_after != seq || seq_after == 0U) {
 		return;
@@ -505,6 +449,11 @@ static void peer_send_core1_audio(void)
 	}
 	g_last_audio_seq = seq;
 	g_audio_sent++;
+	if (silence) {
+		g_audio_silence_sent++;
+		printk("pcmu silence heartbeat sent=%u seq=%u len=%u\n",
+		       g_audio_silence_sent, seq, len);
+	}
 	if ((g_audio_sent % 50U) == 0U) {
 		printk("pcmu audio sent=%u dropped=%u fail=%u seq=%u len=%u\n",
 		       g_audio_sent, g_audio_dropped, g_audio_send_failed, seq, len);
@@ -583,7 +532,6 @@ static int peer_test_start(const char *url, const char *token)
 	}
 
 	peer_connection_oniceconnectionstatechange(g_pc, onconnectionstatechange);
-	peer_connection_ondatachannel(g_pc, onmessage, onopen, onclose);
 	peer_signaling_set_peer_lock(peer_lock, peer_unlock);
 
 	if (peer_signaling_connect(g_url, g_token, g_pc) < 0) {
@@ -598,14 +546,11 @@ static int peer_test_start(const char *url, const char *token)
 	peer_running = true;
 	g_last_audio_seq = 0;
 	g_audio_sent = 0;
+	g_audio_silence_sent = 0;
 	g_audio_send_failed = 0;
 	g_audio_dropped = 0;
 	g_remote_audio_seq = 0;
 	g_remote_audio_dropped = 0;
-	g_datachannel_sent = 0;
-	g_datachannel_send_failed = 0;
-	g_datachannel_created = false;
-	g_datachannel_next_create_ms = 0;
 	k_sem_reset(&signaling_done_sem);
 	k_thread_create(&signaling_thread, signaling_thread_stack,
 			K_THREAD_STACK_SIZEOF(signaling_thread_stack),

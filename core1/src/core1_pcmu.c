@@ -12,6 +12,10 @@
 #include "hardware/structs/timer.h"
 #include "pico_clip_core1_test_shared.h"
 
+#if defined(PICO_CLIP_ZEPHYR_CORE1)
+#include <zephyr/toolchain.h>
+#endif
+
 #define PCMU_FRAME_SAMPLES 160u
 #define PCMU_SAMPLE_RATE 8000u
 #define PCMU_BITRATE 64000u
@@ -30,6 +34,37 @@ static volatile uint32_t playback_free;
 static volatile uint32_t playback_pending;
 static volatile int32_t playback_active;
 static volatile uint32_t capture_dropped;
+
+#if defined(PICO_CLIP_ZEPHYR_CORE1)
+static __ramfunc void wait_for_flash_resume(
+	volatile struct pico_clip_core1_test_shared *shared, uint32_t request)
+{
+	shared->flash_pause_ack = request;
+	__asm volatile ("dmb\nsev" ::: "memory");
+	while (shared->flash_pause_request == request) {
+		__asm volatile ("wfe");
+	}
+	shared->flash_pause_ack = shared->flash_pause_request;
+	__asm volatile ("dmb\nsev" ::: "memory");
+}
+
+static void pause_for_flash_if_requested(
+	volatile struct pico_clip_core1_test_shared *shared)
+{
+	uint32_t request = shared->flash_pause_request;
+
+	if (request == shared->flash_pause_ack) return;
+	nvic_hw->icer[DMA_IRQ_0 / 32u] = 1u << (DMA_IRQ_0 % 32u);
+	wait_for_flash_resume(shared, request);
+	nvic_hw->iser[DMA_IRQ_0 / 32u] = 1u << (DMA_IRQ_0 % 32u);
+}
+#else
+static void pause_for_flash_if_requested(
+	volatile struct pico_clip_core1_test_shared *shared)
+{
+	(void)shared;
+}
+#endif
 
 static uint8_t linear_to_ulaw(int16_t sample)
 {
@@ -238,6 +273,7 @@ int core1_pcmu_stream(void)
 	playback_active = -1;
 	shared->opus_seq = 0u;
 	shared->opus_len = 0u;
+	shared->opus_silence = 0u;
 	shared->opus_bitrate = PCMU_BITRATE;
 	shared->opus_encode_count = 0u;
 	shared->opus_decode_count = 0u;
@@ -246,6 +282,8 @@ int core1_pcmu_stream(void)
 	shared->opus_decode_max_us = 0u;
 	shared->opus_decode_errors = 0u;
 	shared->spk_opus_pending_max = 0u;
+	shared->mic_enabled = 0u;
+	shared->flash_pause_ack = shared->flash_pause_request;
 	shared->spk_opus_read_seq = shared->spk_opus_write_seq;
 	shared->audio_flags |= PICO_CLIP_CORE1_AUDIO_FLAG_OPUS_READY |
 			       PICO_CLIP_CORE1_AUDIO_FLAG_SPK_READY;
@@ -253,29 +291,37 @@ int core1_pcmu_stream(void)
 	start_capture(0u);
 
 	while (true) {
+		pause_for_flash_if_requested(shared);
 		bool did_work = decode_remote(shared);
 		uint32_t index = take_capture();
 		uint32_t start_us;
+		bool mic_enabled;
 
 		if (index > 1u) {
 			if (!did_work) __asm volatile ("wfe");
 			continue;
 		}
-		start_us = timer0_hw->timerawl;
-		for (uint32_t i = 0; i < PCMU_FRAME_SAMPLES; i++) {
-			PCMU_PACKET[i] = linear_to_ulaw(
-				PCMU_CAPTURE[index * PCMU_FRAME_SAMPLES + i]);
+		shared->audio_heartbeat++;
+		shared->opus_dropped = capture_dropped;
+		mic_enabled = shared->mic_enabled != 0u;
+		if (mic_enabled) {
+			start_us = timer0_hw->timerawl;
+			for (uint32_t i = 0; i < PCMU_FRAME_SAMPLES; i++) {
+				PCMU_PACKET[i] = linear_to_ulaw(
+					PCMU_CAPTURE[index * PCMU_FRAME_SAMPLES + i]);
+			}
+			shared->opus_encode_last_us = timer0_hw->timerawl - start_us;
+			if (shared->opus_encode_last_us > shared->opus_encode_max_us)
+				shared->opus_encode_max_us = shared->opus_encode_last_us;
+		} else {
+			continue;
 		}
-		shared->opus_encode_last_us = timer0_hw->timerawl - start_us;
-		if (shared->opus_encode_last_us > shared->opus_encode_max_us)
-			shared->opus_encode_max_us = shared->opus_encode_last_us;
 		shared->opus_seq = 0u;
 		__asm volatile ("dmb" ::: "memory");
 		memcpy((void *)shared->opus_packet, PCMU_PACKET, PCMU_FRAME_SAMPLES);
 		shared->opus_len = PCMU_FRAME_SAMPLES;
+		shared->opus_silence = 0u;
 		shared->opus_encode_count++;
-		shared->opus_dropped = capture_dropped;
-		shared->audio_heartbeat++;
 		__asm volatile ("dmb" ::: "memory");
 		shared->opus_seq = ++sequence;
 	}

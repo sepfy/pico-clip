@@ -9,6 +9,9 @@
 #include <zephyr/shell/shell.h>
 
 #include <hardware/address_mapped.h>
+#include <hardware/regs/io_qspi.h>
+#include <hardware/regs/sio.h>
+#include <hardware/structs/ioqspi.h>
 #include <hardware/structs/psm.h>
 #include <hardware/structs/sio.h>
 
@@ -19,6 +22,72 @@
 #define CPU1_SRAM_SIZE DT_REG_SIZE(DT_CHOSEN(zephyr_sram_cpu1_partition))
 #define CORE1_FIFO_TIMEOUT_LOOPS 100000U
 #define CORE1_VECTOR_BYTES 0x100U
+#define BOOTSEL_POLL_MS 10U
+#define BOOTSEL_PAUSE_TIMEOUT_US 1000U
+
+static __ramfunc bool bootsel_read(void)
+{
+	const uint32_t oe_mask = IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_BITS;
+	uint32_t primask;
+	uint32_t ctrl;
+	bool pressed;
+
+	__asm volatile ("mrs %0, primask\ncpsid i" : "=r" (primask) :: "memory");
+	ctrl = ioqspi_hw->io[1].ctrl;
+	ioqspi_hw->io[1].ctrl =
+		(ctrl & ~oe_mask) |
+		(IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_VALUE_DISABLE <<
+		 IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB);
+	for (volatile uint32_t i = 0; i < 1000u; i++) {
+	}
+	pressed = (sio_hw->gpio_hi_in & SIO_GPIO_HI_IN_QSPI_CSN_BITS) == 0u;
+	ioqspi_hw->io[1].ctrl = ctrl;
+	__asm volatile ("msr primask, %0" :: "r" (primask) : "memory");
+	return pressed;
+}
+
+static bool wait_for_pause_ack(
+	volatile struct pico_clip_core1_test_shared *shared, uint32_t token)
+{
+	for (uint32_t i = 0; i < BOOTSEL_PAUSE_TIMEOUT_US; i++) {
+		if (shared->flash_pause_ack == token) return true;
+		k_busy_wait(1);
+	}
+	return false;
+}
+
+static void bootsel_ptt_thread(void *p1, void *p2, void *p3)
+{
+	volatile struct pico_clip_core1_test_shared *shared = pico_clip_core1_test_shm();
+	uint32_t token = 0u;
+
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+	while (true) {
+		if (shared->magic != PICO_CLIP_CORE1_TEST_MAGIC ||
+		    shared->version != PICO_CLIP_CORE1_TEST_VERSION) {
+			k_msleep(BOOTSEL_POLL_MS);
+			continue;
+		}
+		token += 2u;
+		shared->flash_pause_request = token;
+		__DMB();
+		__SEV();
+		if (wait_for_pause_ack(shared, token)) {
+			shared->mic_enabled = bootsel_read() ? 1u : 0u;
+			shared->bootsel_samples++;
+		}
+		shared->flash_pause_request = token + 1u;
+		__DMB();
+		__SEV();
+		(void)wait_for_pause_ack(shared, token + 1u);
+		k_msleep(BOOTSEL_POLL_MS);
+	}
+}
+
+K_THREAD_DEFINE(bootsel_ptt_tid, 1024, bootsel_ptt_thread,
+		NULL, NULL, NULL, 7, 0, 500);
 
 static inline bool core1_fifo_write_ready(void)
 {
@@ -188,6 +257,10 @@ static int cmd_core1_audio_status(const struct shell *shell, size_t argc, char *
 		    shared->opus_encode_last_us, shared->opus_encode_max_us,
 		    shared->opus_decode_last_us, shared->opus_decode_max_us,
 		    shared->opus_decode_errors, shared->spk_opus_pending_max);
+	shell_print(shell, "ptt: bootsel=%s samples=%u pause=%u/%u",
+		    shared->mic_enabled != 0u ? "pressed" : "released",
+		    shared->bootsel_samples, shared->flash_pause_ack,
+		    shared->flash_pause_request);
 	return 0;
 }
 

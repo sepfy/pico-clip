@@ -48,7 +48,7 @@
 #ifndef PICO_SAMPLE_FREQ
 #define PICO_SAMPLE_FREQ    8000
 #endif
-#define PICO_AUDIO_VOLUME   60
+#define PICO_AUDIO_VOLUME   70
 #define PICO_AUDIO_COUNT    1
 #define PICO_AUDIO_RES_IN   16
 #define PICO_AUDIO_RES_OUT  16
