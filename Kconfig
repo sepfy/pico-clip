@@ -1,0 +1,19 @@
+mainmenu "Pico Clip Configuration"
+
+source "Kconfig.zephyr"
+
+menu "Pico Clip"
+
+config WIFI_SSID
+	string "Wi-Fi SSID"
+	default ""
+	help
+	  SSID used for the automatic Wi-Fi connection.
+
+config WIFI_PSK
+	string "Wi-Fi pre-shared key"
+	default ""
+	help
+	  Pre-shared key used for the automatic Wi-Fi connection.
+
+endmenu

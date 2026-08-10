@@ -37,4 +37,7 @@ extern const int16_t Sine_wave_table[];
 extern const int16_t Sine_440hz[];
 extern const int16_t Happy_birsday[];
 
+#define HAPPY_BIRTHDAY_SAMPLE_RATE 24000u
+#define HAPPY_BIRTHDAY_SAMPLE_COUNT 124800u
+
 #endif //_PICO_AUDIO_DATA_H

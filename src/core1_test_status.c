@@ -266,3 +266,38 @@ static int cmd_core1_audio_status(const struct shell *shell, size_t argc, char *
 
 SHELL_CMD_REGISTER(core1_audio_status, NULL, "Show Core1 audio status",
 		   cmd_core1_audio_status);
+
+static int cmd_core1_audio(const struct shell *shell, size_t argc, char **argv)
+{
+	volatile struct pico_clip_core1_test_shared *shared = pico_clip_core1_test_shm();
+	uint32_t command;
+
+	if (argc != 2) {
+		shell_error(shell, "usage: core1_audio <birthday|stop>");
+		return -EINVAL;
+	}
+	if (strcmp(argv[1], "birthday") == 0) {
+		command = PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY;
+	} else if (strcmp(argv[1], "stop") == 0) {
+		command = PICO_CLIP_CORE1_AUDIO_CMD_STOP;
+	} else {
+		shell_error(shell, "unknown action: %s", argv[1]);
+		return -EINVAL;
+	}
+	if (shared->magic != PICO_CLIP_CORE1_TEST_MAGIC ||
+	    shared->version != PICO_CLIP_CORE1_TEST_VERSION) {
+		shell_error(shell, "Core1 audio is not ready");
+		return -EAGAIN;
+	}
+	shared->cpu0_audio_cmd = command;
+	__DMB();
+	shared->cpu0_audio_cmd_seq++;
+	__DMB();
+	__SEV();
+	shell_print(shell, "Core1 audio %s requested (seq=%u)", argv[1],
+		    shared->cpu0_audio_cmd_seq);
+	return 0;
+}
+
+SHELL_CMD_REGISTER(core1_audio, NULL, "Control Core1 audio: birthday or stop",
+		   cmd_core1_audio);

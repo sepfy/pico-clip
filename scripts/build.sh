@@ -2,22 +2,33 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WORKSPACE_DIR="$(cd "${ROOT_DIR}/.." && pwd)"
 BOARD="${BOARD:-rpi_pico2/rp2350a/m33/w}"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build/pico2w_pico_clip}"
 CACHE_DIR="${CACHE_DIR:-${ROOT_DIR}/build/zephyr-cache}"
+VENV_DIR="${VENV_DIR:-${ROOT_DIR}/.venv}"
 export CCACHE_DIR="${CCACHE_DIR:-${ROOT_DIR}/build/ccache}"
 
-if [ -f "${WORKSPACE_DIR}/walkie_talkie/.venv/bin/activate" ]; then
-  # shellcheck disable=SC1091
-  source "${WORKSPACE_DIR}/walkie_talkie/.venv/bin/activate"
+if [ ! -x "${VENV_DIR}/bin/python" ]; then
+  echo "Missing pico-clip Python environment: ${VENV_DIR}" >&2
+  echo "Create it with: python3 -m venv ${VENV_DIR}" >&2
+  exit 1
 fi
 
-if [ -x "${WORKSPACE_DIR}/walkie_talkie/.venv/bin/python" ]; then
-  WEST_CMD=("${WORKSPACE_DIR}/walkie_talkie/.venv/bin/python" -m west)
-else
-  WEST_CMD=(west)
-fi
+WEST_CMD=("${VENV_DIR}/bin/python" -m west)
+CMAKE_ARGS=(-DUSER_CACHE_DIR="${CACHE_DIR}" -DEXTRA_CONF_FILE=)
 
-"${WEST_CMD[@]}" build -p always -b "${BOARD}" "${ROOT_DIR}" -d "${BUILD_DIR}" -- -DUSER_CACHE_DIR="${CACHE_DIR}"
-echo "UF2: ${BUILD_DIR}/zephyr/zephyr.uf2"
+case "${1:-make}" in
+  config)
+    "${WEST_CMD[@]}" build -p auto -b "${BOARD}" "${ROOT_DIR}" -d "${BUILD_DIR}" \
+      -t menuconfig -- "${CMAKE_ARGS[@]}"
+    ;;
+  make)
+    "${WEST_CMD[@]}" build -p auto -b "${BOARD}" "${ROOT_DIR}" -d "${BUILD_DIR}" \
+      -- "${CMAKE_ARGS[@]}"
+    echo "UF2: ${BUILD_DIR}/zephyr/zephyr.uf2"
+    ;;
+  *)
+    echo "Usage: $0 [config|make]" >&2
+    exit 1
+    ;;
+esac

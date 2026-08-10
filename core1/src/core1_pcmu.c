@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "audio_pio.h"
+#include "audio_data.h"
 #include "hardware/dma.h"
 #include "hardware/pio.h"
 #include "hardware/structs/nvic.h"
@@ -34,6 +35,9 @@ static volatile uint32_t playback_free;
 static volatile uint32_t playback_pending;
 static volatile int32_t playback_active;
 static volatile uint32_t capture_dropped;
+static uint32_t audio_cmd_seq;
+static bool birthday_playing;
+static uint32_t birthday_sample;
 
 #if defined(PICO_CLIP_ZEPHYR_CORE1)
 static __ramfunc void wait_for_flash_resume(
@@ -190,6 +194,58 @@ static void queue_playback(uint32_t index)
 	nvic_hw->iser[DMA_IRQ_0 / 32u] = 1u << (DMA_IRQ_0 % 32u);
 }
 
+static void handle_audio_command(
+	volatile struct pico_clip_core1_test_shared *shared)
+{
+	uint32_t seq = shared->cpu0_audio_cmd_seq;
+
+	if (seq == audio_cmd_seq) return;
+	audio_cmd_seq = seq;
+	switch (shared->cpu0_audio_cmd) {
+	case PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY:
+		birthday_sample = 0u;
+		birthday_playing = true;
+		shared->audio_progress = 0u;
+		shared->audio_state = PICO_CLIP_CORE1_AUDIO_PLAYING;
+		break;
+	case PICO_CLIP_CORE1_AUDIO_CMD_STOP:
+		birthday_playing = false;
+		shared->audio_state = PICO_CLIP_CORE1_AUDIO_IDLE;
+		break;
+	default:
+		break;
+	}
+	shared->cpu1_audio_ack_seq = seq;
+}
+
+static bool play_birthday_frame(
+	volatile struct pico_clip_core1_test_shared *shared)
+{
+	int32_t buffer;
+	uint32_t i;
+
+	if (!birthday_playing) return false;
+	buffer = take_playback();
+	if (buffer < 0) return false;
+	for (i = 0u; i < PCMU_FRAME_SAMPLES; i++) {
+		if (birthday_sample >= HAPPY_BIRTHDAY_SAMPLE_COUNT) break;
+		PCMU_PLAYBACK[(uint32_t)buffer * PCMU_FRAME_SAMPLES + i] =
+			Happy_birsday[birthday_sample];
+		birthday_sample += HAPPY_BIRTHDAY_SAMPLE_RATE / PCMU_SAMPLE_RATE;
+	}
+	for (; i < PCMU_FRAME_SAMPLES; i++) {
+		PCMU_PLAYBACK[(uint32_t)buffer * PCMU_FRAME_SAMPLES + i] = 0;
+	}
+	shared->audio_progress = birthday_sample;
+	shared->audio_play_count++;
+	queue_playback((uint32_t)buffer);
+	if (birthday_sample >= HAPPY_BIRTHDAY_SAMPLE_COUNT) {
+		birthday_playing = false;
+		shared->audio_state = PICO_CLIP_CORE1_AUDIO_DONE;
+	}
+	return true;
+}
+
 static bool decode_remote(volatile struct pico_clip_core1_test_shared *shared)
 {
 	uint32_t read_seq = shared->spk_opus_read_seq;
@@ -285,6 +341,9 @@ int core1_pcmu_stream(void)
 	shared->mic_enabled = 0u;
 	shared->flash_pause_ack = shared->flash_pause_request;
 	shared->spk_opus_read_seq = shared->spk_opus_write_seq;
+	audio_cmd_seq = shared->cpu0_audio_cmd_seq;
+	birthday_playing = false;
+	birthday_sample = 0u;
 	shared->audio_flags |= PICO_CLIP_CORE1_AUDIO_FLAG_OPUS_READY |
 			       PICO_CLIP_CORE1_AUDIO_FLAG_SPK_READY;
 	shared->audio_state = PICO_CLIP_CORE1_AUDIO_PLAYING;
@@ -292,7 +351,9 @@ int core1_pcmu_stream(void)
 
 	while (true) {
 		pause_for_flash_if_requested(shared);
-		bool did_work = decode_remote(shared);
+		handle_audio_command(shared);
+		bool did_work = play_birthday_frame(shared);
+		if (!birthday_playing) did_work = decode_remote(shared) || did_work;
 		uint32_t index = take_capture();
 		uint32_t start_us;
 		bool mic_enabled;

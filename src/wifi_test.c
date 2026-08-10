@@ -18,7 +18,8 @@
 
 #include "pico_clip_core1_test_shared.h"
 
-static struct net_mgmt_event_callback net_cb;
+static struct net_mgmt_event_callback wifi_net_cb;
+static struct net_mgmt_event_callback ipv4_net_cb;
 static K_SEM_DEFINE(ipv4_ready_sem, 0, 1);
 static bool wifi_ready;
 static bool wifi_connecting;
@@ -33,10 +34,11 @@ static uint32_t g_audio_send_failed;
 static uint32_t g_audio_dropped;
 static uint32_t g_remote_audio_seq;
 static uint32_t g_remote_audio_dropped;
+static bool g_oai_events_open;
 static char g_url[192];
-static char g_token[128];
-static const char g_wifi_ssid[] = "yu_2.4G";
-static const char g_wifi_psk[] = "12120905";
+static char g_token[256];
+static const char g_wifi_ssid[] = CONFIG_WIFI_SSID;
+static const char g_wifi_psk[] = CONFIG_WIFI_PSK;
 
 static void wifi_reconnect_work_handler(struct k_work *work);
 K_WORK_DELAYABLE_DEFINE(wifi_reconnect_work, wifi_reconnect_work_handler);
@@ -75,10 +77,6 @@ static bool wifi_has_ipv4(void)
 	}
 
 	ifaddr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
-	if (ifaddr == NULL) {
-		ifaddr = net_if_ipv4_get_global_addr(iface, NET_ADDR_DHCP);
-	}
-
 	return ifaddr != NULL;
 }
 
@@ -171,11 +169,13 @@ static void on_net_event(struct net_mgmt_event_callback *cb, uint64_t mgmt_event
 		return;
 	}
 
-	if (mgmt_event == NET_EVENT_IPV4_ADDR_ADD) {
-		ifaddr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
-		if (ifaddr == NULL) {
-			ifaddr = net_if_ipv4_get_global_addr(iface, NET_ADDR_DHCP);
+	if (mgmt_event == NET_EVENT_IPV4_ADDR_ADD ||
+	    mgmt_event == NET_EVENT_IPV4_DHCP_BOUND) {
+		if (wifi_ready) {
+			return;
 		}
+
+		ifaddr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
 		if (ifaddr == NULL) {
 			printk("IPv4 event received, address not ready yet\n");
 		} else {
@@ -325,25 +325,69 @@ SHELL_CMD_REGISTER(cpu_freq, NULL, "Measure CPU frequency over 1 second.", cmd_c
 
 static void onconnectionstatechange(PeerConnectionState state, void *data)
 {
-	volatile struct pico_clip_core1_test_shared *shared = pico_clip_core1_test_shm();
-	uint32_t seq;
-
 	ARG_UNUSED(data);
 	g_state = state;
 	printk("peer state: %s\n", peer_connection_state_to_string(state));
-
-	if (state == PEER_CONNECTION_CONNECTED &&
-	    shared->magic == PICO_CLIP_CORE1_TEST_MAGIC &&
-	    shared->version == PICO_CLIP_CORE1_TEST_VERSION &&
-	    (shared->audio_flags & PICO_CLIP_CORE1_AUDIO_FLAG_OPUS_READY) == 0U) {
-		seq = shared->cpu0_audio_cmd_seq + 1U;
-		shared->cpu0_audio_cmd = PICO_CLIP_CORE1_AUDIO_CMD_OPUS;
-		shared->cpu0_audio_cmd_seq = seq;
-		__SEV();
-		printk("core1 20 ms double-buffered microphone Opus stream requested seq=%u\n",
-		       seq);
-	}
 }
+
+static void ondatachannelopen(void *user_data)
+{
+	int ret;
+
+	ARG_UNUSED(user_data);
+	ret = peer_connection_create_datachannel(g_pc, DATA_CHANNEL_RELIABLE,
+					  0, 0, "oai-events", "");
+	if (ret < 0) {
+		printk("OpenAI data channel create failed: %d\n", ret);
+		return;
+	}
+
+	g_oai_events_open = true;
+	printk("OpenAI data channel open: oai-events\n");
+}
+
+static void ondatachannelclose(void *user_data)
+{
+	ARG_UNUSED(user_data);
+	g_oai_events_open = false;
+	printk("OpenAI data channel closed\n");
+}
+
+static void ondatachannelmessage(char *msg, size_t len, void *user_data,
+				 uint16_t sid)
+{
+	ARG_UNUSED(user_data);
+	printk("OpenAI event sid=%u: %.*s\n", sid, (int)len, msg);
+}
+
+static int cmd_openai_event(const struct shell *sh, size_t argc, char **argv)
+{
+	int ret;
+
+	if (argc != 2) {
+		shell_error(sh, "Usage: openai_event '<json>'");
+		return -EINVAL;
+	}
+	if (!peer_running || g_pc == NULL || !g_oai_events_open) {
+		shell_error(sh, "OpenAI oai-events data channel is not open");
+		return -ENOTCONN;
+	}
+
+	peer_lock();
+	ret = peer_connection_datachannel_send(g_pc, argv[1], strlen(argv[1]));
+	peer_unlock();
+	if (ret < 0) {
+		shell_error(sh, "event send failed: %d", ret);
+		return ret;
+	}
+
+	shell_print(sh, "OpenAI event sent");
+	return 0;
+}
+
+SHELL_CMD_REGISTER(openai_event, NULL,
+		   "Send one JSON event over the OpenAI oai-events data channel",
+		   cmd_openai_event);
 
 static void onaudiotrack(uint8_t *data, size_t size, void *user_data)
 {
@@ -514,7 +558,7 @@ static int peer_test_start(const char *url, const char *token)
 		.ice_servers = {
 			{ .urls = "stun:stun.l.google.com:19302" },
 		},
-		.datachannel = DATA_CHANNEL_NONE,
+		.datachannel = DATA_CHANNEL_STRING,
 		.video_codec = CODEC_NONE,
 		.audio_codec = CODEC_PCMU,
 		.onaudiotrack = onaudiotrack,
@@ -532,7 +576,8 @@ static int peer_test_start(const char *url, const char *token)
 	}
 
 	peer_connection_oniceconnectionstatechange(g_pc, onconnectionstatechange);
-	peer_signaling_set_peer_lock(peer_lock, peer_unlock);
+	peer_connection_ondatachannel(g_pc, ondatachannelmessage,
+				      ondatachannelopen, ondatachannelclose);
 
 	if (peer_signaling_connect(g_url, g_token, g_pc) < 0) {
 		printk("peer_signaling_connect failed\n");
@@ -551,6 +596,7 @@ static int peer_test_start(const char *url, const char *token)
 	g_audio_dropped = 0;
 	g_remote_audio_seq = 0;
 	g_remote_audio_dropped = 0;
+	g_oai_events_open = false;
 	k_sem_reset(&signaling_done_sem);
 	k_thread_create(&signaling_thread, signaling_thread_stack,
 			K_THREAD_STACK_SIZEOF(signaling_thread_stack),
@@ -562,19 +608,24 @@ static int peer_test_start(const char *url, const char *token)
 
 int main(void)
 {
+	printk("pico-clip firmware: manual-peer-test\n");
 	printk("wifi_shell app start\n");
 	printk("Auto Wi-Fi connect enabled: SSID=%s\n", g_wifi_ssid);
 
-	net_mgmt_init_event_callback(&net_cb, on_net_event,
-				     NET_EVENT_IPV4_ADDR_ADD |
-					     NET_EVENT_WIFI_CONNECT_RESULT |
+	net_mgmt_init_event_callback(&wifi_net_cb, on_net_event,
+				     NET_EVENT_WIFI_CONNECT_RESULT |
 					     NET_EVENT_WIFI_DISCONNECT_RESULT);
-	net_mgmt_add_event_callback(&net_cb);
+	net_mgmt_add_event_callback(&wifi_net_cb);
+	net_mgmt_init_event_callback(&ipv4_net_cb, on_net_event,
+				     NET_EVENT_IPV4_ADDR_ADD |
+					     NET_EVENT_IPV4_DHCP_BOUND);
+	net_mgmt_add_event_callback(&ipv4_net_cb);
 	(void)wifi_auto_connect();
 
 	printk("waiting for IPv4 address...\n");
 	k_sem_take(&ipv4_ready_sem, K_FOREVER);
-	printk("network is ready, you can run: peer_test -u <url>\n");
+	printk("network is ready, run peer_test manually when needed\n");
+	printk("peer_test -u <url> [-t <token>]\n");
 
 	while (1) {
 		k_sleep(K_SECONDS(1));

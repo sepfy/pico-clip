@@ -11,18 +11,11 @@
 
 #define PICO_CLIP_CORE1_TEST_SHM_BASE 0x20080000u
 #define PICO_CLIP_CORE1_TEST_MAGIC 0x54314350u /* PC1T */
-#define PICO_CLIP_CORE1_TEST_VERSION 5u
+#define PICO_CLIP_CORE1_TEST_VERSION 6u
 
 #define PICO_CLIP_CORE1_AUDIO_CMD_NONE 0u
 #define PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY 1u
 #define PICO_CLIP_CORE1_AUDIO_CMD_STOP 2u
-#define PICO_CLIP_CORE1_AUDIO_CMD_LOOPBACK 3u
-#define PICO_CLIP_CORE1_AUDIO_CMD_OPUS 4u
-#define PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY_OPUS 5u
-#define PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY_20MS 6u
-#define PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY_STREAM 7u
-#define PICO_CLIP_CORE1_AUDIO_CMD_MIC_OPUS_LOOPBACK 8u
-#define PICO_CLIP_CORE1_AUDIO_CMD_BIRTHDAY_CODEC_LOOPBACK 9u
 
 #define PICO_CLIP_CORE1_AUDIO_IDLE 0u
 #define PICO_CLIP_CORE1_AUDIO_INIT 1u
@@ -44,11 +37,6 @@ struct pico_clip_core1_test_shared {
 	uint32_t magic;
 	uint32_t version;
 	uint32_t cpu1_boot_count;
-	uint32_t cpu1_heartbeat;
-	uint32_t cpu0_cmd_seq;
-	uint32_t cpu0_cmd_value;
-	uint32_t cpu1_ack_seq;
-	uint32_t cpu1_response_value;
 	uint32_t cpu0_audio_cmd_seq;
 	uint32_t cpu0_audio_cmd;
 	uint32_t cpu1_audio_ack_seq;
@@ -57,9 +45,6 @@ struct pico_clip_core1_test_shared {
 	uint32_t audio_heartbeat;
 	uint32_t audio_play_count;
 	uint32_t audio_progress;
-	int32_t audio_sample_min;
-	int32_t audio_sample_max;
-	uint32_t audio_sample_nonzero;
 	uint32_t audio_flags;
 	uint32_t opus_seq;
 	uint32_t opus_len;

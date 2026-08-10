@@ -1,0 +1,26 @@
+manifest:
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+    - name: sepfy
+      url-base: https://github.com/sepfy
+
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: v4.4.0
+      import: true
+
+    - name: libpeer
+      remote: sepfy
+      revision: robot
+      path: modules/lib/libpeer
+
+    - name: libpeer-zephyr-deps
+      remote: sepfy
+      revision: main
+      path: modules/lib/libpeer-deps
+      submodules: true
+
+  self:
+    path: pico-clip
