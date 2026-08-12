@@ -1,48 +1,55 @@
-.. zephyr:code-sample:: wifi-shell
-   :name: Wi-Fi shell
-   :relevant-api: net_stats
+pico-clip
+=========
 
-   Test Wi-Fi functionality using the Wi-Fi shell module.
+Zephyr application for Raspberry Pi Pico 2 W
+(``rpi_pico2/rp2350a/m33/w``).
 
-Overview
-********
+Prerequisites
+-------------
 
-This sample allows testing Wi-Fi drivers for various boards by
-enabling the Wi-Fi shell module that provides a set of commands:
-scan, connect, and disconnect.  It also enables the net_shell module
-to verify net_if settings.
+* Git
+* Python 3.12 or newer with ``venv`` support
+* CMake 3.20 or newer
+* Ninja
 
-Building and Running
-********************
+Configure Wi-Fi
+---------------
 
-Verify the board and chip you are targeting provide Wi-Fi support.
+Before building, set the Wi-Fi SSID and password in ``prj.conf``::
 
-For instance you can use Nordic's nrf7002dk by selecting the nrf7002dk/nrf5340/cpuapp board.
+   CONFIG_WIFI_SSID="YOUR_WIFI_SSID"
+   CONFIG_WIFI_PSK="YOUR_WIFI_PASSWORD"
 
-.. zephyr-app-commands::
-   :zephyr-app: samples/net/wifi/shell
-   :board: nrf7002dk/nrf5340/cpuapp
-   :goals: build
-   :compact:
+Build
+-----
 
-Sample console interaction
-==========================
+Create a new workspace and download the dependencies::
 
-.. code-block:: console
+   mkdir -p pico-clip-workspace
+   cd pico-clip-workspace
 
-   shell> wifi scan
-   Scan requested
-   shell>
-   Num  | SSID                             (len) | Chan | RSSI | Sec
-   1    | kapoueh!                         8     | 1    | -93  | WPA/WPA2
-   2    | mooooooh                         8     | 6    | -89  | WPA/WPA2
-   3    | Ap-foo blob..                    13    | 11   | -73  | WPA/WPA2
-   4    | gksu                             4     | 1    | -26  | WPA/WPA2
-   ----------
-   Scan request done
+   git clone https://github.com/sepfy/pico-clip.git
+   python3 -m venv pico-clip/.venv
+   pico-clip/.venv/bin/python -m pip install --upgrade pip west
 
-   shell> wifi connect "gksu" 4 SecretStuff
-   Connection requested
-   shell>
-   Connected
-   shell>
+   pico-clip/.venv/bin/python -m west init -l pico-clip
+   pico-clip/.venv/bin/python -m west update
+   pico-clip/.venv/bin/python -m pip install \
+     -r zephyr/scripts/requirements-base.txt
+   pico-clip/.venv/bin/python -m west sdk install \
+     --gnu-toolchains arm-zephyr-eabi
+
+Download the CYW43439 Wi-Fi firmware::
+
+   pico-clip/.venv/bin/python -m west blobs \
+     -l 'img/whd/resources/(firmware/COMPONENT_43439/43439A0\.bin|clm/COMPONENT_43439/COMPONENT_MURATA-1YN/43439A0\.clm_blob)' \
+     fetch hal_infineon
+
+Configure ``pico-clip/prj.conf`` as shown above, then build::
+
+   cd pico-clip
+   ./scripts/build.sh make
+
+The generated firmware is located at::
+
+   build/pico2w_pico_clip/zephyr/zephyr.uf2

@@ -15,6 +15,7 @@ manifest:
       remote: sepfy
       revision: robot
       path: modules/lib/libpeer
+      submodules: true
 
     - name: libpeer-zephyr-deps
       remote: sepfy
