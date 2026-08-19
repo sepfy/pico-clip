@@ -16,4 +16,12 @@ config WIFI_PSK
 	help
 	  Pre-shared key used for the automatic Wi-Fi connection.
 
+config OPENAI_API_KEY
+	string "OpenAI API key"
+	default ""
+	help
+	  API key used as the default WebRTC signaling bearer token. The
+	  webrtc_test command's -t option overrides this value. This value is
+	  compiled into the firmware, so only use it on trusted devices.
+
 endmenu

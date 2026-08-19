@@ -5,6 +5,8 @@
  */
 
 #include <zephyr/kernel.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/net/net_event.h>
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/net_ip.h>
@@ -17,6 +19,8 @@
 #include <string.h>
 
 #include "pico_clip_core1_test_shared.h"
+
+#define STATUS_LED_PIN 0U
 
 static struct net_mgmt_event_callback wifi_net_cb;
 static struct net_mgmt_event_callback ipv4_net_cb;
@@ -35,10 +39,17 @@ static uint32_t g_audio_dropped;
 static uint32_t g_remote_audio_seq;
 static uint32_t g_remote_audio_dropped;
 static bool g_oai_events_open;
+static const struct device *const g_status_led =
+	DEVICE_DT_GET(DT_NODELABEL(cyw43_gpio));
+static bool g_status_led_ready;
+static bool g_status_led_on;
 static char g_url[192];
 static char g_token[256];
 static const char g_wifi_ssid[] = CONFIG_WIFI_SSID;
 static const char g_wifi_psk[] = CONFIG_WIFI_PSK;
+static const char g_openai_api_url[] =
+	"https://api.openai.com/v1/realtime/calls?model=gpt-realtime-1.5";
+static const char g_openai_api_key[] = CONFIG_OPENAI_API_KEY;
 
 static void wifi_reconnect_work_handler(struct k_work *work);
 K_WORK_DELAYABLE_DEFINE(wifi_reconnect_work, wifi_reconnect_work_handler);
@@ -53,10 +64,50 @@ static int peer_test_start(const char *url, const char *token);
 static void peer_lock(void);
 static void peer_unlock(void);
 
+static void status_led_init(void)
+{
+	int ret;
+
+	if (!device_is_ready(g_status_led)) {
+		printk("status LED device is not ready\n");
+		return;
+	}
+
+	ret = gpio_pin_configure(g_status_led, STATUS_LED_PIN,
+				 GPIO_OUTPUT_INACTIVE);
+	if (ret < 0) {
+		printk("status LED configure failed: %d\n", ret);
+		return;
+	}
+
+	g_status_led_ready = true;
+	g_status_led_on = false;
+}
+
+static void status_led_update(void)
+{
+	bool led_on;
+	int ret;
+
+	if (!g_status_led_ready) {
+		return;
+	}
+
+	led_on = g_state == PEER_CONNECTION_CONNECTED;
+	if (led_on == g_status_led_on) {
+		return;
+	}
+
+	ret = gpio_pin_set(g_status_led, STATUS_LED_PIN, led_on);
+	if (ret == 0) {
+		g_status_led_on = led_on;
+	}
+}
 static void webrtc_test_usage(const struct shell *sh)
 {
 	shell_print(sh,
 		    "Usage: webrtc_test start -u <url> [-t <token>] | stop | status");
+	shell_print(sh, "       -t overrides CONFIG_OPENAI_API_KEY");
 }
 
 static void wifi_schedule_reconnect(void)
@@ -190,7 +241,7 @@ static void on_net_event(struct net_mgmt_event_callback *cb, uint64_t mgmt_event
 static int webrtc_test_start_cmd(const struct shell *sh, size_t argc, char **argv)
 {
 	const char *url;
-	const char *token = "";
+	const char *token = g_openai_api_key;
 	int ret;
 
 	if (argc != 3 && argc != 5) {
@@ -327,6 +378,7 @@ static void onconnectionstatechange(PeerConnectionState state, void *data)
 {
 	ARG_UNUSED(data);
 	g_state = state;
+	status_led_update();
 	printk("peer state: %s\n", peer_connection_state_to_string(state));
 }
 
@@ -549,6 +601,8 @@ static void peer_worker(void *a, void *b, void *c)
 	peer_deinit();
 	g_pc = NULL;
 	peer_running = false;
+	g_state = PEER_CONNECTION_CLOSED;
+	status_led_update();
 	printk("peer stopped\n");
 }
 
@@ -608,9 +662,12 @@ static int peer_test_start(const char *url, const char *token)
 
 int main(void)
 {
+	int ret;
+
 	printk("pico-clip firmware: manual-peer-test\n");
 	printk("wifi_shell app start\n");
 	printk("Auto Wi-Fi connect enabled: SSID=%s\n", g_wifi_ssid);
+	status_led_init();
 
 	net_mgmt_init_event_callback(&wifi_net_cb, on_net_event,
 				     NET_EVENT_WIFI_CONNECT_RESULT |
@@ -624,12 +681,23 @@ int main(void)
 
 	printk("waiting for IPv4 address...\n");
 	k_sem_take(&ipv4_ready_sem, K_FOREVER);
-	printk("network is ready, run peer_test manually when needed\n");
+	printk("network is ready\n");
+	if (g_openai_api_key[0] == '\0') {
+		printk("OpenAI auto-connect skipped: CONFIG_OPENAI_API_KEY is empty\n");
+	} else {
+		printk("connecting to OpenAI Realtime automatically\n");
+		ret = peer_test_start(g_openai_api_url, g_openai_api_key);
+		if (ret < 0) {
+			printk("OpenAI auto-connect failed: %d\n", ret);
+		} else {
+			printk("OpenAI peer test started automatically\n");
+		}
+	}
+
+	printk("peer_test remains available for manual control\n");
 	printk("peer_test -u <url> [-t <token>]\n");
 
-	while (1) {
-		k_sleep(K_SECONDS(1));
-	}
+	k_sleep(K_FOREVER);
 
 	return 0;
 }
