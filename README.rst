@@ -4,8 +4,18 @@ pico-talk
 A voice conversation demo based on Zephyr and Raspberry Pi Pico 2 W
 (``rpi_pico2/rp2350a/m33/w``), using the OpenAI Realtime API.
 
+.. image:: assets/pico-talk-device.jpg
+   :alt: A handheld pico-talk voice assistant
+   :width: 560px
+   :align: center
+
 Hardware wiring
 ---------------
+
+.. image:: assets/pico-talk-hardware.jpg
+   :alt: Internal pico-talk prototype hardware and wiring
+   :width: 360px
+   :align: center
 
 ::
 
