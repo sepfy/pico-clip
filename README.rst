@@ -9,6 +9,12 @@ A voice conversation demo based on Zephyr and Raspberry Pi Pico 2 W
    :width: 560px
    :align: center
 
+.. image:: https://img.youtube.com/vi/vkChzMTeUjE/maxresdefault.jpg
+   :alt: Watch the pico-talk demo video on YouTube
+   :target: https://www.youtube.com/shorts/vkChzMTeUjE
+   :width: 560px
+   :align: center
+
 Hardware wiring
 ---------------
 
