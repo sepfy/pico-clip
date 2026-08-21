@@ -15,6 +15,14 @@ A voice conversation demo based on Zephyr and Raspberry Pi Pico 2 W
    :width: 560px
    :align: center
 
+Acknowledgements
+----------------
+
+Thanks to i-BoxIt for sharing the `Raspberry Pi Pico Case
+<https://makerworld.com/en/models/856555-raspberry-pi-pico-case#profileId-1272380>`__,
+which the 3D-printed enclosure is based on. The model uses MakerWorld's
+Standard Digital File License.
+
 Hardware wiring
 ---------------
 
